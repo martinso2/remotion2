@@ -1,20 +1,22 @@
-import Link from "next/link";
+import dynamic from "next/dynamic";
+
+const VideoCreator = dynamic(
+  () => import("@/components/VideoCreator").then((m) => m.VideoCreator),
+  { ssr: false }
+);
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-8">
-      <h1 className="text-3xl font-semibold text-white mb-4">
-        Remotion + Next.js
-      </h1>
-      <p className="text-slate-400 mb-8 text-center max-w-md">
-        Programmatic video creation with Remotion embedded in Next.js 14
-      </p>
-      <Link
-        href="/studio"
-        className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors"
-      >
-        Open Studio
-      </Link>
+    <main className="min-h-screen bg-slate-950 p-6 lg:p-8">
+      <header className="mb-6">
+        <h1 className="text-2xl font-semibold text-white">
+          Create
+        </h1>
+        <p className="text-slate-400 text-sm mt-1">
+          Enter a prompt and choose a platform to create TikTok or Facebook videos
+        </p>
+      </header>
+      <VideoCreator />
     </main>
   );
 }
