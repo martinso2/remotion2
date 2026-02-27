@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { canRenderMediaOnWeb, renderMediaOnWeb } from "@remotion/web-renderer";
+import { Player, PlayerRef } from "@remotion/player";
+import { VideoComposition } from "./remotion/VideoComposition";
 
 function reorderArray<T>(arr: T[], fromIndex: number, toIndex: number): T[] {
   const result = [...arr];
@@ -8,11 +11,12 @@ function reorderArray<T>(arr: T[], fromIndex: number, toIndex: number): T[] {
   result.splice(toIndex, 0, removed);
   return result;
 }
-import { Player, PlayerRef } from "@remotion/player";
 import {
-  calculateImageGalleryDuration,
+  type MediaItem,
+  calculateMediaGalleryDuration,
   FADE_DURATION_FRAMES,
-} from "./remotion/ImageGalleryWithAudio";
+  IMAGE_DURATION_FRAMES,
+} from "./remotion/MediaGalleryWithAudio";
 
 const VIDEO_FPS = 30;
 
@@ -61,6 +65,22 @@ function getAudioDuration(file: File): Promise<number> {
   });
 }
 
+function getVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.addEventListener("loadedmetadata", () => {
+      URL.revokeObjectURL(url);
+      resolve(video.duration);
+    });
+    video.addEventListener("error", () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load video"));
+    });
+  });
+}
+
 export function VideoCreator() {
   const [prompt, setPrompt] = useState("");
   const [platform, setPlatform] = useState<Platform>("tiktok");
@@ -68,41 +88,113 @@ export function VideoCreator() {
   const [musicUrl, setMusicUrl] = useState<string | null>(null);
   const [musicDuration, setMusicDuration] = useState<number>(0);
   const [durationOption, setDurationOption] = useState<DurationOption>("90");
-  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [imagePositions, setImagePositions] = useState<string[]>([]);
-  const [showMessage, setShowMessage] = useState(true);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const [showMessage, setShowMessage] = useState(false);
   const [fitToMusic, setFitToMusic] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const playerRef = useRef<PlayerRef>(null);
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderProgress, setRenderProgress] = useState(0);
+  const [renderError, setRenderError] = useState<string | null>(null);
+  const [projectTitle, setProjectTitle] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [projectList, setProjectList] = useState<{ title: string }[]>([]);
+  const [selectedProjectToLoad, setSelectedProjectToLoad] = useState("");
+  const [isLoadingProject, setIsLoadingProject] = useState(false);
+  const [loadedMusicFileName, setLoadedMusicFileName] = useState<string | null>(null);
+  const [isLoadingVideos, setIsLoadingVideos] = useState(false);
+  const [videoLoadProgress, setVideoLoadProgress] = useState({ current: 0, total: 0 });
 
   const config = PLATFORMS.find((p) => p.id === platform) ?? PLATFORMS[0];
+
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((data) => setProjectList(Array.isArray(data) ? data : []))
+      .catch(() => setProjectList([]));
+  }, []);
 
   const handleImagesChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const input = e.target;
       const files = Array.from(input?.files ?? []);
       if (files.length === 0) return;
-      const urls = files.map((f) => URL.createObjectURL(f));
-      setImageUrls((prev) => {
-        prev.forEach((url) => URL.revokeObjectURL(url));
-        return urls;
-      });
-      setImagePositions(Array(files.length).fill("top center"));
+      const items: MediaItem[] = files.map((f) => ({
+        type: "image",
+        url: URL.createObjectURL(f),
+        durationInFrames: IMAGE_DURATION_FRAMES,
+        fileName: f.name,
+      }));
+      setMediaItems((prev) => [...prev, ...items]);
+      setImagePositions((prev) => [
+        ...prev,
+        ...Array(files.length).fill("top center"),
+      ]);
       input.value = "";
     },
     []
   );
 
-  const removeImages = useCallback(() => {
-    imageUrls.forEach((url) => URL.revokeObjectURL(url));
-    setImageUrls([]);
-    setImagePositions([]);
-  }, [imageUrls]);
+  const handleVideosChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const input = e.target;
+      const files = Array.from(input?.files ?? []);
+      if (files.length === 0) return;
+      setIsLoadingVideos(true);
+      setVideoLoadProgress({ current: 0, total: files.length });
+      const items: MediaItem[] = [];
+      for (let i = 0; i < files.length; i++) {
+        setVideoLoadProgress({ current: i + 1, total: files.length });
+        try {
+          const durationSec = await getVideoDuration(files[i]);
+          items.push({
+            type: "video",
+            url: URL.createObjectURL(files[i]),
+            durationInFrames: Math.ceil(durationSec * VIDEO_FPS),
+            fileName: files[i].name,
+          });
+        } catch {
+          // Skip failed videos
+        }
+      }
+      if (items.length > 0) {
+        setMediaItems((prev) => [...prev, ...items]);
+        setImagePositions((prev) => [
+          ...prev,
+          ...Array(items.length).fill("top center"),
+        ]);
+      }
+      input.value = "";
+      setIsLoadingVideos(false);
+      setVideoLoadProgress({ current: 0, total: 0 });
+    },
+    []
+  );
 
-  const reorderImages = useCallback((fromIndex: number, toIndex: number) => {
-    setImageUrls((prev) => reorderArray(prev, fromIndex, toIndex));
+  const removeMediaItem = useCallback((index: number) => {
+    setMediaItems((prev) => {
+      const item = prev[index];
+      if (item?.url) URL.revokeObjectURL(item.url);
+      return prev.filter((_, i) => i !== index);
+    });
+    setImagePositions((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const removeAllMedia = useCallback(() => {
+    mediaItems.forEach((item) => {
+      if (item.url) URL.revokeObjectURL(item.url);
+    });
+    setMediaItems([]);
+    setImagePositions([]);
+  }, [mediaItems]);
+
+  const reorderMediaItems = useCallback((fromIndex: number, toIndex: number) => {
+    setMediaItems((prev) => reorderArray(prev, fromIndex, toIndex));
     setImagePositions((prev) => reorderArray(prev, fromIndex, toIndex));
   }, []);
 
@@ -129,6 +221,7 @@ export function VideoCreator() {
       try {
         const duration = await getAudioDuration(file);
         setMusicFile(file);
+        setLoadedMusicFileName(null);
         setMusicUrl(URL.createObjectURL(file));
         setMusicDuration(duration);
         setDurationOption("music");
@@ -147,14 +240,13 @@ export function VideoCreator() {
     setMusicFile(null);
     setMusicUrl(null);
     setMusicDuration(0);
+    setLoadedMusicFileName(null);
     setFitToMusic(false);
     setDurationOption("90");
   }, [musicUrl]);
 
-  const imageDuration =
-    imageUrls.length > 0
-      ? calculateImageGalleryDuration(imageUrls.length)
-      : 0;
+  const mediaDuration =
+    mediaItems.length > 0 ? calculateMediaGalleryDuration(mediaItems) : 0;
 
   const durationSeconds =
     durationOption === "music" && musicDuration > 0
@@ -166,30 +258,98 @@ export function VideoCreator() {
   const durationInFrames =
     fitToMusic && musicDuration > 0
       ? musicDurationFrames
-      : imageUrls.length > 0
-        ? imageDuration
+      : mediaItems.length > 0
+        ? mediaDuration
         : textDuration;
 
-  const getImageStartFrame = useCallback(
-    (imageIndex: number) => {
-      const imageCount = imageUrls.length;
-      if (imageCount === 0) return 0;
-      const imageDurationFrames =
-        (durationInFrames + (imageCount - 1) * FADE_DURATION_FRAMES) /
-        imageCount;
-      const overlapOffset = imageDurationFrames - FADE_DURATION_FRAMES;
-      const startFrame = imageIndex * overlapOffset;
+  const getMediaStartFrame = useCallback(
+    (index: number) => {
+      let startFrame = 0;
+      for (let i = 0; i < index && i < mediaItems.length; i++) {
+        startFrame +=
+          mediaItems[i].durationInFrames - FADE_DURATION_FRAMES;
+      }
       return Math.round(startFrame + FADE_DURATION_FRAMES);
     },
-    [imageUrls.length, durationInFrames]
+    [mediaItems]
   );
 
-  const seekToImage = useCallback(
-    (imageIndex: number) => {
-      playerRef.current?.seekTo(getImageStartFrame(imageIndex));
+  const seekToMedia = useCallback(
+    (index: number) => {
+      playerRef.current?.seekTo(getMediaStartFrame(index));
     },
-    [getImageStartFrame]
+    [getMediaStartFrame]
   );
+
+  const handleRender = useCallback(async () => {
+    setRenderError(null);
+    const check = await canRenderMediaOnWeb({
+      width: config.width,
+      height: config.height,
+    });
+    if (!check.canRender) {
+      setRenderError(
+        check.issues?.[0]?.message ??
+          "Your browser does not support in-browser rendering. Try Chrome or Edge."
+      );
+      return;
+    }
+
+    setIsRendering(true);
+    setRenderProgress(0);
+
+    const totalFrames = Math.max(1, durationInFrames);
+    try {
+      const inputProps = {
+        mediaItems,
+        imagePositions:
+          imagePositions.length === mediaItems.length
+            ? imagePositions
+            : mediaItems.map(() => "top center"),
+        text: showMessage ? prompt || "Enter a prompt above" : "",
+        showMessage,
+        audioSrc: musicUrl ?? undefined,
+      };
+
+      const { getBlob } = await renderMediaOnWeb({
+        composition: {
+          id: "ReelForge",
+          component: VideoComposition,
+          durationInFrames: totalFrames,
+          fps: VIDEO_FPS,
+          width: config.width,
+          height: config.height,
+          defaultProps: inputProps,
+        },
+        inputProps,
+        onProgress: ({ encodedFrames }) =>
+          setRenderProgress(Math.min(1, encodedFrames / totalFrames)),
+      });
+
+      const blob = await getBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `reelforge-${config.width}x${config.height}.mp4`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setRenderError(
+        err instanceof Error ? err.message : "Render failed. Try again."
+      );
+    } finally {
+      setIsRendering(false);
+      setRenderProgress(0);
+    }
+  }, [
+    mediaItems,
+    imagePositions,
+    showMessage,
+    prompt,
+    musicUrl,
+    durationInFrames,
+    config,
+  ]);
 
   const lazyComponent = useCallback(
     () =>
@@ -199,70 +359,268 @@ export function VideoCreator() {
     []
   );
 
+  const handleSaveProject = useCallback(async () => {
+    const title = projectTitle.trim() || "untitled";
+    setIsSaving(true);
+    setSaveStatus(null);
+    try {
+      const formData = new FormData();
+      formData.append("title", title);
+      formData.append("platform", platform);
+      formData.append("durationOption", durationOption);
+      formData.append("fitToMusic", String(fitToMusic));
+      formData.append("imagePositions", JSON.stringify(imagePositions));
+      formData.append(
+        "mediaItems",
+        JSON.stringify(
+          mediaItems.map((m, i) => ({
+            order: i,
+            type: m.type,
+            durationInFrames: m.durationInFrames,
+            fileName: m.fileName ?? `item-${i}`,
+            objectPosition: imagePositions[i] ?? "top center",
+          }))
+        )
+      );
+      if (musicFile) {
+        formData.append("musicFile", musicFile);
+        formData.append("musicDuration", String(musicDuration));
+        formData.append("musicFileName", musicFile.name);
+      } else if (musicUrl && musicDuration > 0) {
+        const r = await fetch(musicUrl);
+        const blob = await r.blob();
+        formData.append("musicFile", blob, "music.mp3");
+        formData.append("musicDuration", String(musicDuration));
+        formData.append("musicFileName", "music.mp3");
+      }
+      for (let i = 0; i < mediaItems.length; i++) {
+        const item = mediaItems[i];
+        const res = await fetch(item.url);
+        const blob = await res.blob();
+        const ext = item.type === "video" ? "mp4" : "jpg";
+        const name = item.fileName ?? `media-${i}.${ext}`;
+        formData.append(`media-${i}`, blob, name);
+      }
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `Save failed: ${res.status}`);
+      }
+      setSaveStatus("Project saved");
+      setProjectTitle(title);
+      const listRes = await fetch("/api/projects");
+      const list = await listRes.json();
+      setProjectList(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setSaveStatus(
+        err instanceof Error ? err.message : "Failed to save project"
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    projectTitle,
+    platform,
+    durationOption,
+    fitToMusic,
+    imagePositions,
+    mediaItems,
+    musicFile,
+    musicDuration,
+  ]);
+
+  const handleLoadProject = useCallback(async () => {
+    const title = selectedProjectToLoad.trim();
+    if (!title) return;
+    setIsLoadingProject(true);
+    setSaveStatus(null);
+    try {
+      const res = await fetch(`/api/projects?title=${encodeURIComponent(title)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Project not found");
+      }
+      const project = await res.json();
+      mediaItems.forEach((m) => m.url && URL.revokeObjectURL(m.url));
+      if (musicUrl) URL.revokeObjectURL(musicUrl);
+      const base = `/api/projects/${encodeURIComponent(project.title)}`;
+      const items: MediaItem[] = [];
+      const sorted = [...(project.mediaItems ?? [])].sort(
+        (a: { order?: number }, b: { order?: number }) => (a.order ?? 0) - (b.order ?? 0)
+      );
+      for (const m of sorted) {
+        const savedPath = m.savedPath ?? `media/${m.order}-${m.fileName ?? "item"}`;
+        const filename = savedPath.replace("media/", "");
+        const r = await fetch(`${base}/media/${encodeURIComponent(filename)}`);
+        if (!r.ok) continue;
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        items.push({
+          type: m.type,
+          url,
+          durationInFrames: m.durationInFrames ?? IMAGE_DURATION_FRAMES,
+          fileName: m.fileName,
+        });
+      }
+      setMediaItems(items);
+      setImagePositions(
+        (project.imagePositions ?? []).slice(0, items.length) ||
+          items.map(() => "top center")
+      );
+      setPlatform((project.platform as Platform) ?? platform);
+      setDurationOption((project.durationOption as DurationOption) ?? durationOption);
+      setFitToMusic(project.fitToMusic ?? false);
+      setProjectTitle(project.title ?? title);
+      if (project.musicSavedPath) {
+        const musicRes = await fetch(`${base}/music`);
+        if (musicRes.ok) {
+          const musicBlob = await musicRes.blob();
+          const url = URL.createObjectURL(musicBlob);
+          setMusicUrl(url);
+          setMusicFile(null);
+          setLoadedMusicFileName(project.musicFileName ?? "Music");
+          setMusicDuration(project.musicDuration ?? 0);
+          setDurationOption("music");
+        }
+      } else {
+        setMusicFile(null);
+        setMusicUrl(null);
+        setMusicDuration(0);
+        setLoadedMusicFileName(null);
+      }
+      setSaveStatus("Project loaded");
+    } catch (err) {
+      setSaveStatus(
+        err instanceof Error ? err.message : "Failed to load project"
+      );
+    } finally {
+      setIsLoadingProject(false);
+    }
+  }, [selectedProjectToLoad, musicUrl, mediaItems, platform, durationOption]);
+
   return (
-    <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 h-full min-h-[calc(100vh-8rem)]">
+    <>
+      <header className="mb-6 flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-semibold text-white">Create</h1>
+        <input
+          type="text"
+          value={projectTitle}
+          onChange={(e) => setProjectTitle(e.target.value)}
+          placeholder="Project title"
+          className="rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500 min-w-[200px]"
+        />
+        <button
+          type="button"
+          onClick={handleSaveProject}
+          disabled={isSaving}
+          className="rounded-md border border-slate-600 bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {isSaving ? "Saving…" : "Save project"}
+        </button>
+        {projectList.length > 0 && (
+          <>
+            <select
+              value={selectedProjectToLoad}
+              onChange={(e) => setSelectedProjectToLoad(e.target.value)}
+              className="rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500 min-w-[140px]"
+            >
+              <option value="">Load project…</option>
+              {projectList.map((p) => (
+                <option key={p.title} value={p.title}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleLoadProject}
+              disabled={!selectedProjectToLoad || isLoadingProject}
+              className="rounded-md border border-slate-600 bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isLoadingProject ? "Loading…" : "Load"}
+            </button>
+          </>
+        )}
+        {saveStatus && (
+          <span className="text-sm text-slate-400">{saveStatus}</span>
+        )}
+      </header>
+      <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 h-full min-h-[calc(100vh-8rem)]">
       {/* Console */}
       <aside className="lg:w-80 flex-shrink-0 space-y-4">
         <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
           <h2 className="text-sm font-medium text-slate-300 mb-3">
-            Message
-          </h2>
-          <label className="flex items-center gap-2 mb-2">
-            <input
-              type="checkbox"
-              checked={showMessage}
-              onChange={(e) => setShowMessage(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-600 text-slate-500 focus:ring-slate-500"
-            />
-            <span className="text-slate-300 text-sm">Show text on screen</span>
-          </label>
-          {showMessage && (
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Describe your video... e.g. A motivational quote about success"
-              className="w-full h-24 px-3 py-2 rounded-md bg-slate-800 border border-slate-600 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500 resize-none"
-              rows={4}
-            />
-          )}
-        </div>
-
-        <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
-          <h2 className="text-sm font-medium text-slate-300 mb-3">
-            Images
+            Images & Videos
           </h2>
           <div className="space-y-2">
             <div className="flex flex-col gap-1">
               <span className="text-xs text-slate-500">
-                15-frame crossfade between images
+                15-frame crossfade between clips
               </span>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleImagesChange}
-                className="sr-only"
-                aria-label="Choose images"
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex w-full cursor-pointer items-center justify-center rounded-md border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-600"
-              >
-                Choose images
-              </button>
+              <div className="flex gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImagesChange}
+                  className="sr-only"
+                  aria-label="Choose images"
+                />
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  accept="video/*"
+                  multiple
+                  onChange={handleVideosChange}
+                  className="sr-only"
+                  aria-label="Choose videos"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex flex-1 cursor-pointer items-center justify-center rounded-md border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-600"
+                >
+                  Add images
+                </button>
+                <button
+                  type="button"
+                  onClick={() => videoInputRef.current?.click()}
+                  disabled={isLoadingVideos}
+                  className="flex flex-1 cursor-pointer items-center justify-center rounded-md border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add videos
+                </button>
+              </div>
+              {isLoadingVideos && videoLoadProgress.total > 0 && (
+                <div className="space-y-1">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
+                    <div
+                      className="h-full bg-indigo-500 transition-all duration-200"
+                      style={{
+                        width: `${(videoLoadProgress.current / videoLoadProgress.total) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Loading video {videoLoadProgress.current} of {videoLoadProgress.total}…
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">
-                {imageUrls.length > 0
-                  ? `${imageUrls.length} image${imageUrls.length !== 1 ? "s" : ""} chosen`
-                  : "No images chosen"}
+                {mediaItems.length > 0
+                  ? `${mediaItems.length} clip${mediaItems.length !== 1 ? "s" : ""} chosen`
+                  : "No media chosen"}
               </span>
-              {imageUrls.length > 0 && (
+              {mediaItems.length > 0 && (
                 <button
                   type="button"
-                  onClick={removeImages}
+                  onClick={removeAllMedia}
                   className="text-slate-500 hover:text-red-400 text-xs"
                 >
                   Clear
@@ -286,7 +644,7 @@ export function VideoCreator() {
                 className="block w-full text-sm text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-slate-700 file:text-white file:text-sm hover:file:bg-slate-600"
               />
             </label>
-            {musicFile && (
+            {(musicFile || musicUrl) && (
               <>
                 <label className="flex items-center gap-2 cursor-pointer group">
                   <input
@@ -305,7 +663,7 @@ export function VideoCreator() {
                 </label>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-400 truncate max-w-[140px]">
-                    {musicFile.name}
+                    {musicFile?.name ?? loadedMusicFileName ?? "Music"}
                   </span>
                   <button
                     type="button"
@@ -328,14 +686,14 @@ export function VideoCreator() {
             <p className="text-sm text-slate-400">
               {(durationInFrames / VIDEO_FPS).toFixed(1)}s (fit to music)
             </p>
-          ) : imageUrls.length > 0 ? (
+          ) : mediaItems.length > 0 ? (
             <p className="text-sm text-slate-400">
-              {(durationInFrames / VIDEO_FPS).toFixed(1)}s from images
+              {(durationInFrames / VIDEO_FPS).toFixed(1)}s from media
             </p>
           ) : (
             <div className="space-y-2">
               {DURATION_OPTIONS.filter(
-                (d) => d.id !== "music" || (musicFile && musicDuration > 0)
+                (d) => d.id !== "music" || ((musicFile || musicUrl) && musicDuration > 0)
               ).map((d) => (
                 <label
                   key={d.id}
@@ -393,10 +751,32 @@ export function VideoCreator() {
           </div>
         </div>
 
-        <p className="text-xs text-slate-500">
-          Preview updates as you type. Render locally with{" "}
-          <code className="bg-slate-800 px-1 rounded">npm run render</code>.
-        </p>
+        <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+          <h2 className="text-sm font-medium text-slate-300 mb-3">
+            Export
+          </h2>
+          <button
+            type="button"
+            onClick={handleRender}
+            disabled={isRendering || durationInFrames < 1}
+            className="w-full rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isRendering ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Rendering… {Math.round(renderProgress * 100)}%
+              </span>
+            ) : (
+              "Render to MP4"
+            )}
+          </button>
+          {renderError && (
+            <p className="mt-2 text-xs text-red-400">{renderError}</p>
+          )}
+          <p className="mt-2 text-xs text-slate-500">
+            Renders in your browser. Chrome or Edge recommended.
+          </p>
+        </div>
       </aside>
 
       {/* Studio */}
@@ -413,8 +793,11 @@ export function VideoCreator() {
               ref={playerRef}
               lazyComponent={lazyComponent}
               inputProps={{
-                imageUrls,
-                imagePositions: imagePositions.length === imageUrls.length ? imagePositions : imageUrls.map(() => "top center"),
+                mediaItems,
+                imagePositions:
+                  imagePositions.length === mediaItems.length
+                    ? imagePositions
+                    : mediaItems.map(() => "top center"),
                 text: showMessage ? prompt || "Enter a prompt above" : "",
                 showMessage,
                 audioSrc: musicUrl ?? undefined,
@@ -431,15 +814,15 @@ export function VideoCreator() {
             />
           </div>
 
-          {imageUrls.length > 0 && (
+          {mediaItems.length > 0 && (
             <div className="border-t border-slate-700 px-4 py-3 bg-slate-900/30">
               <p className="text-xs text-slate-500 mb-2">
-                Timeline — drag to reorder, use dropdown to adjust crop position
+                Timeline — drag to reorder, × to remove, dropdown to adjust crop
               </p>
               <div className="flex gap-2 overflow-x-auto pb-1 items-start">
-                {imageUrls.map((url, index) => (
+                {mediaItems.map((item, index) => (
                   <div
-                    key={url}
+                    key={`${item.type}-${item.url}-${index}`}
                     className="relative flex flex-col items-center flex-shrink-0 gap-1"
                   >
                     {dropTargetIndex === index && draggedIndex !== index && (
@@ -465,7 +848,7 @@ export function VideoCreator() {
                       onDrop={(e) => {
                         e.preventDefault();
                         if (draggedIndex !== null && draggedIndex !== index) {
-                          reorderImages(draggedIndex, index);
+                          reorderMediaItems(draggedIndex, index);
                         }
                         setDraggedIndex(null);
                         setDropTargetIndex(null);
@@ -476,23 +859,48 @@ export function VideoCreator() {
                         ${draggedIndex === index ? "opacity-50 scale-95" : ""}
                       `}
                     >
-                      <img
-                        src={url}
-                        alt={`Slide ${index + 1}`}
-                        className="w-full h-full object-cover pointer-events-none"
-                        draggable={false}
-                      />
-                      <span className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-xs text-center py-0.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeMediaItem(index);
+                        }}
+                        className="absolute top-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-red-600 text-xs leading-none"
+                        aria-label={`Remove ${index + 1}`}
+                      >
+                        ×
+                      </button>
+                      {item.type === "image" ? (
+                        <img
+                          src={item.url}
+                          alt={`Slide ${index + 1}`}
+                          className="w-full h-full object-cover pointer-events-none"
+                          draggable={false}
+                        />
+                      ) : (
+                        <video
+                          src={item.url}
+                          muted
+                          className="w-full h-full object-cover pointer-events-none"
+                          preload="metadata"
+                          crossOrigin="anonymous"
+                          style={{ objectFit: "cover" }}
+                        />
+                      )}
+                      <span className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-0.5 bg-black/70 text-white text-xs py-0.5">
+                        {item.type === "video" && (
+                          <span className="text-[8px]">▶</span>
+                        )}
                         {index + 1}
                       </span>
                     </div>
                     <select
                       value={imagePositions[index] ?? "top center"}
                       onChange={(e) => setImagePosition(index, e.target.value)}
-                      onFocus={() => seekToImage(index)}
+                      onFocus={() => seekToMedia(index)}
                       onClick={(e) => {
                         e.stopPropagation();
-                        seekToImage(index);
+                        seekToMedia(index);
                       }}
                       className="w-full min-w-0 max-w-[90px] rounded border border-slate-600 bg-slate-800 px-1 py-0.5 text-[10px] text-slate-300 focus:border-slate-500 focus:outline-none"
                     >
@@ -510,5 +918,6 @@ export function VideoCreator() {
         </div>
       </section>
     </div>
+    </>
   );
 }

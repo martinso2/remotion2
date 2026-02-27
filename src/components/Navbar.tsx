@@ -1,4 +1,7 @@
+import Image from "next/image";
 import Link from "next/link";
+
+import logo from "@/app/reel-motion-logo-1.jpeg";
 
 export function Navbar() {
   return (
@@ -6,24 +9,14 @@ export function Navbar() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-14 items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5">
-            {/* Logo - video/reel icon */}
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-700">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-4 w-4 text-white"
-              >
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="M10 9l5 3-5 3V9z" />
-              </svg>
-            </div>
-            <span className="text-lg font-semibold text-white">
-              ReelForge
-            </span>
+            <Image
+              src={logo}
+              alt="ReelForge"
+              width={120}
+              height={32}
+              className="h-8 w-auto object-contain"
+              priority
+            />
           </Link>
 
           <div className="flex items-center gap-4">

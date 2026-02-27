@@ -1,8 +1,8 @@
-import { ImageGalleryWithAudio } from "./ImageGalleryWithAudio";
+import { MediaGalleryWithAudio } from "./MediaGalleryWithAudio";
 import { PromptTextWithAudio } from "./PromptTextWithAudio";
 
 export type VideoCompositionProps = {
-  imageUrls: string[];
+  mediaItems: { type: "image" | "video"; url: string; durationInFrames: number }[];
   imagePositions?: string[];
   text: string;
   showMessage: boolean;
@@ -10,16 +10,16 @@ export type VideoCompositionProps = {
 };
 
 export const VideoComposition = ({
-  imageUrls,
+  mediaItems,
   imagePositions,
   text,
   showMessage,
   audioSrc,
 }: VideoCompositionProps) => {
-  if (imageUrls.length > 0) {
+  if (mediaItems.length > 0) {
     return (
-      <ImageGalleryWithAudio
-        imageUrls={imageUrls}
+      <MediaGalleryWithAudio
+        mediaItems={mediaItems}
         imagePositions={imagePositions}
         text={showMessage && text ? text : undefined}
         audioSrc={audioSrc}
