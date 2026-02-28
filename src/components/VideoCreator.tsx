@@ -16,7 +16,7 @@ import {
   calculateMediaGalleryDuration,
   IMAGE_DURATION_FRAMES,
 } from "./remotion/MediaGalleryWithAudio";
-import { ImagePositionEditor } from "./ImagePositionEditor";
+import { InlineMediaEditor } from "./InlineMediaEditor";
 
 const VIDEO_FPS = 30;
 
@@ -77,8 +77,7 @@ export function VideoCreator() {
   const [musicDuration, setMusicDuration] = useState<number>(0);
   const [durationOption, setDurationOption] = useState<DurationOption>("90");
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
-  const [imagePositions, setImagePositions] = useState<string[]>([]);
-  const [imageScales, setImageScales] = useState<number[]>([]);
+  const [mediaTransforms, setMediaTransforms] = useState<Array<{ position: string; scale: number }>>([]);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const [showMessage, setShowMessage] = useState(false);
   const [fitToMusic, setFitToMusic] = useState(false);
@@ -104,14 +103,54 @@ export function VideoCreator() {
   const [motionBlurShutterAngle, setMotionBlurShutterAngle] = useState(180);
   const [dissolveDurationSeconds, setDissolveDurationSeconds] = useState(0.5);
   const [positionEditorIndex, setPositionEditorIndex] = useState<number | null>(null);
+  const skipLoadTransformsRef = useRef(false);
 
   const config = PLATFORMS.find((p) => p.id === platform) ?? PLATFORMS[0];
+
+  const getTransform = useCallback((i: number) => mediaTransforms[i] ?? { position: "top center", scale: 1 }, [mediaTransforms]);
+  const [transformsKey, setTransformsKey] = useState(0);
 
   useEffect(() => {
     fetch("/api/projects")
       .then((r) => r.json())
       .then((data) => setProjectList(Array.isArray(data) ? data : []))
       .catch(() => setProjectList([]));
+  }, []);
+
+  const loadTransformsFromFile = useCallback(() => {
+    fetch("/api/transforms")
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setMediaTransforms((prev) => {
+            const merged = prev.length > 0 ? [...prev] : [];
+            for (let i = 0; i < data.length; i++) {
+              if (!merged[i]) merged[i] = { position: "top center", scale: 1 };
+              merged[i] = data[i];
+            }
+            return merged;
+          });
+          setTransformsKey((k) => k + 1);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (mediaItems.length === 0) return;
+    if (skipLoadTransformsRef.current) {
+      skipLoadTransformsRef.current = false;
+      return;
+    }
+    loadTransformsFromFile();
+  }, [mediaItems.length, loadTransformsFromFile]);
+
+  const saveTransformsToFile = useCallback(async (transforms: Array<{ position: string; scale: number }>) => {
+    await fetch("/api/transforms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(transforms),
+    });
   }, []);
 
   const handleImagesChange = useCallback(
@@ -126,11 +165,10 @@ export function VideoCreator() {
         fileName: f.name,
       }));
       setMediaItems((prev) => [...prev, ...items]);
-      setImagePositions((prev) => [
+      setMediaTransforms((prev) => [
         ...prev,
-        ...Array(files.length).fill("top center"),
+        ...Array(files.length).fill(null).map(() => ({ position: "top center", scale: 1 })),
       ]);
-      setImageScales((prev) => [...prev, ...Array(files.length).fill(1)]);
       input.value = "";
     },
     []
@@ -160,11 +198,10 @@ export function VideoCreator() {
       }
       if (items.length > 0) {
         setMediaItems((prev) => [...prev, ...items]);
-        setImagePositions((prev) => [
+        setMediaTransforms((prev) => [
           ...prev,
-          ...Array(items.length).fill("top center"),
+          ...Array(items.length).fill(null).map(() => ({ position: "top center", scale: 1 })),
         ]);
-        setImageScales((prev) => [...prev, ...Array(items.length).fill(1)]);
       }
       input.value = "";
       setIsLoadingVideos(false);
@@ -179,8 +216,7 @@ export function VideoCreator() {
       if (item?.url) URL.revokeObjectURL(item.url);
       return prev.filter((_, i) => i !== index);
     });
-    setImagePositions((prev) => prev.filter((_, i) => i !== index));
-    setImageScales((prev) => prev.filter((_, i) => i !== index));
+    setMediaTransforms((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const removeAllMedia = useCallback(() => {
@@ -188,28 +224,19 @@ export function VideoCreator() {
       if (item.url) URL.revokeObjectURL(item.url);
     });
     setMediaItems([]);
-    setImagePositions([]);
-    setImageScales([]);
+    setMediaTransforms([]);
   }, [mediaItems]);
 
   const reorderMediaItems = useCallback((fromIndex: number, toIndex: number) => {
     setMediaItems((prev) => reorderArray(prev, fromIndex, toIndex));
-    setImagePositions((prev) => reorderArray(prev, fromIndex, toIndex));
-    setImageScales((prev) => reorderArray(prev, fromIndex, toIndex));
+    setMediaTransforms((prev) => reorderArray(prev, fromIndex, toIndex));
   }, []);
 
-  const setImagePosition = useCallback((index: number, position: string) => {
-    setImagePositions((prev) => {
+  const setMediaTransform = useCallback((index: number, position: string, scale: number) => {
+    setMediaTransforms((prev) => {
       const next = [...prev];
-      next[index] = position;
-      return next;
-    });
-  }, []);
-
-  const setImageScale = useCallback((index: number, scale: number) => {
-    setImageScales((prev) => {
-      const next = [...prev];
-      next[index] = scale;
+      while (next.length <= index) next.push({ position: "top center", scale: 1 });
+      next[index] = { position, scale };
       return next;
     });
   }, []);
@@ -313,14 +340,8 @@ export function VideoCreator() {
     try {
       const inputProps = {
         mediaItems,
-        imagePositions:
-          imagePositions.length === mediaItems.length
-            ? imagePositions
-            : mediaItems.map(() => "top center"),
-        imageScales:
-          imageScales.length === mediaItems.length
-            ? imageScales
-            : mediaItems.map(() => 1),
+        imagePositions: mediaItems.map((_, i) => getTransform(i).position),
+        imageScales: mediaItems.map((_, i) => getTransform(i).scale),
         text: showMessage ? prompt || "Enter a prompt above" : "",
         showMessage,
         audioSrc: musicUrl ?? undefined,
@@ -363,8 +384,8 @@ export function VideoCreator() {
     }
   }, [
     mediaItems,
-    imagePositions,
-    imageScales,
+    mediaTransforms,
+    getTransform,
     showMessage,
     filmGrainEnabled,
     filmGrainIntensity,
@@ -395,8 +416,8 @@ export function VideoCreator() {
       formData.append("platform", platform);
       formData.append("durationOption", durationOption);
       formData.append("fitToMusic", String(fitToMusic));
-      formData.append("imagePositions", JSON.stringify(imagePositions));
-      formData.append("imageScales", JSON.stringify(imageScales));
+      formData.append("imagePositions", JSON.stringify(mediaItems.map((_, i) => getTransform(i).position)));
+      formData.append("imageScales", JSON.stringify(mediaItems.map((_, i) => getTransform(i).scale)));
       formData.append(
         "mediaItems",
         JSON.stringify(
@@ -405,7 +426,7 @@ export function VideoCreator() {
             type: m.type,
             durationInFrames: m.durationInFrames,
             fileName: m.fileName ?? `item-${i}`,
-            objectPosition: imagePositions[i] ?? "top center",
+            objectPosition: getTransform(i).position,
           }))
         )
       );
@@ -453,8 +474,8 @@ export function VideoCreator() {
     platform,
     durationOption,
     fitToMusic,
-    imagePositions,
-    imageScales,
+    mediaTransforms,
+    getTransform,
     mediaItems,
     musicFile,
     musicDuration,
@@ -494,15 +515,14 @@ export function VideoCreator() {
       }
       mediaItems.forEach((m) => m.url && URL.revokeObjectURL(m.url));
       if (musicUrl) URL.revokeObjectURL(musicUrl);
+      skipLoadTransformsRef.current = true;
       setMediaItems(items);
-      setImagePositions(
-        (project.imagePositions ?? []).slice(0, items.length) ||
-          items.map(() => "top center")
-      );
-      setImageScales(
-        (project.imageScales ?? []).slice(0, items.length) ||
-          items.map(() => 1)
-      );
+      const projectTransforms = items.map((_: unknown, i: number) => ({
+        position: (project.imagePositions ?? [])[i] ?? "top center",
+        scale: (project.imageScales ?? [])[i] ?? 1,
+      }));
+      setMediaTransforms(projectTransforms);
+      saveTransformsToFile(projectTransforms).catch(() => {});
       setPlatform((project.platform as Platform) ?? platform);
       setDurationOption((project.durationOption as DurationOption) ?? durationOption);
       setFitToMusic(project.fitToMusic ?? false);
@@ -893,44 +913,64 @@ export function VideoCreator() {
       <section className="flex-1 min-w-0">
         <div className="rounded-lg border border-slate-700 bg-slate-900/30 overflow-hidden">
           <div className="px-4 py-2 border-b border-slate-700 flex items-center justify-between">
-            <span className="text-sm font-medium text-slate-400">Preview</span>
+            <span className="text-sm font-medium text-slate-400">
+              {positionEditorIndex !== null ? `Editing clip ${positionEditorIndex + 1} — drag to reposition, adjust zoom, then Save` : "Preview"}
+            </span>
             <span className="text-xs text-slate-500">
               {config.width}×{config.height}
             </span>
           </div>
           <div className="p-4 flex justify-center bg-slate-950/50">
-            <Player
-              ref={playerRef}
-              lazyComponent={lazyComponent}
-              inputProps={{
-                mediaItems,
-                imagePositions:
-                  imagePositions.length === mediaItems.length
-                    ? imagePositions
-                    : mediaItems.map(() => "top center"),
-                imageScales:
-                  imageScales.length === mediaItems.length
-                    ? imageScales
-                    : mediaItems.map(() => 1),
-                text: showMessage ? prompt || "Enter a prompt above" : "",
-                showMessage,
-                audioSrc: musicUrl ?? undefined,
-                filmGrainEnabled,
-                filmGrainIntensity,
-                motionBlurEnabled,
-                motionBlurShutterAngle,
-                dissolveDurationFrames,
-              }}
-              durationInFrames={durationInFrames}
-              compositionWidth={config.width}
-              compositionHeight={config.height}
-              fps={VIDEO_FPS}
-              controls
-              style={{
-                width: "100%",
-                maxWidth: config.width > config.height ? 640 : 320,
-              }}
-            />
+            {positionEditorIndex !== null && mediaItems[positionEditorIndex] ? (
+              <div className="flex flex-col items-center w-full max-w-[640px]">
+                <InlineMediaEditor
+                  mediaUrl={mediaItems[positionEditorIndex].url}
+                  mediaType={mediaItems[positionEditorIndex].type}
+                  currentPosition={getTransform(positionEditorIndex).position}
+                  currentScale={getTransform(positionEditorIndex).scale}
+                  frameWidth={config.width}
+                  frameHeight={config.height}
+                  onSave={async (position, scale) => {
+                    const newTransforms = [...mediaTransforms];
+                    while (newTransforms.length <= positionEditorIndex) newTransforms.push({ position: "top center", scale: 1 });
+                    newTransforms[positionEditorIndex] = { position, scale };
+                    setMediaTransforms(newTransforms);
+                    await saveTransformsToFile(newTransforms);
+                    setTransformsKey((k) => k + 1);
+                    setPositionEditorIndex(null);
+                  }}
+                  onCancel={() => setPositionEditorIndex(null)}
+                />
+              </div>
+            ) : (
+              <Player
+                key={transformsKey}
+                ref={playerRef}
+                lazyComponent={lazyComponent}
+                inputProps={{
+                  mediaItems,
+                  imagePositions: mediaItems.map((_, i) => getTransform(i).position),
+                  imageScales: mediaItems.map((_, i) => getTransform(i).scale),
+                  text: showMessage ? prompt || "Enter a prompt above" : "",
+                  showMessage,
+                  audioSrc: musicUrl ?? undefined,
+                  filmGrainEnabled,
+                  filmGrainIntensity,
+                  motionBlurEnabled,
+                  motionBlurShutterAngle,
+                  dissolveDurationFrames,
+                }}
+                durationInFrames={durationInFrames}
+                compositionWidth={config.width}
+                compositionHeight={config.height}
+                fps={VIDEO_FPS}
+                controls
+                style={{
+                  width: "100%",
+                  maxWidth: config.width > config.height ? 640 : 320,
+                }}
+              />
+            )}
           </div>
 
           {mediaItems.length > 0 && (
@@ -972,10 +1012,7 @@ export function VideoCreator() {
                         setDraggedIndex(null);
                         setDropTargetIndex(null);
                       }}
-                      onDoubleClick={() => {
-                        seekToMedia(index);
-                        setPositionEditorIndex(index);
-                      }}
+                      onDoubleClick={() => setPositionEditorIndex(index)}
                       className={`
                         relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-slate-600 hover:border-slate-500 cursor-grab active:cursor-grabbing
                         transition-all duration-150
@@ -1026,22 +1063,6 @@ export function VideoCreator() {
         </div>
       </section>
 
-      {positionEditorIndex !== null && mediaItems[positionEditorIndex] && (
-        <ImagePositionEditor
-          isOpen={true}
-          onClose={() => setPositionEditorIndex(null)}
-          onSave={(position, scale) => {
-            setImagePosition(positionEditorIndex, position);
-            setImageScale(positionEditorIndex, scale);
-          }}
-          mediaUrl={mediaItems[positionEditorIndex].url}
-          mediaType={mediaItems[positionEditorIndex].type}
-          currentPosition={imagePositions[positionEditorIndex] ?? "top center"}
-          currentScale={imageScales[positionEditorIndex] ?? 1}
-          frameWidth={config.width}
-          frameHeight={config.height}
-        />
-      )}
     </div>
     </>
   );
