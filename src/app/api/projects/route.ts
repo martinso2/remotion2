@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir, readdir, readFile } from "fs/promises";
+import { createHash } from "crypto";
 import path from "path";
 
 function sanitizeTitle(title: string): string {
@@ -7,11 +8,16 @@ function sanitizeTitle(title: string): string {
 }
 
 const PROJECTS_DIR = path.join(process.cwd(), "data", "projects");
+const MEDIA_DIR = path.join(process.cwd(), "data", "media");
+
+function hashBuffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex").slice(0, 16);
+}
 
 export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const title = searchParams.get("title");
   try {
-    const { searchParams } = new URL(request.url);
-    const title = searchParams.get("title");
     if (title) {
       const projectDir = path.join(PROJECTS_DIR, sanitizeTitle(title));
       const projectPath = path.join(projectDir, "project.json");
@@ -63,33 +69,47 @@ export async function POST(request: NextRequest) {
     const musicFileName = (formData.get("musicFileName") as string) || "";
 
     const safeTitle = sanitizeTitle(title);
-    const projectDir = path.join(process.cwd(), "data", "projects", safeTitle);
+    const projectDir = path.join(PROJECTS_DIR, safeTitle);
     await mkdir(projectDir, { recursive: true });
-    await mkdir(path.join(projectDir, "media"), { recursive: true });
+    await mkdir(MEDIA_DIR, { recursive: true });
 
-    const mediaPaths: string[] = [];
+    const mediaHashKeys: string[] = [];
+    const seenHashes = new Set<string>();
+
     for (let i = 0; i < mediaItems.length; i++) {
       const file = formData.get(`media-${i}`) as File | null;
       if (file) {
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
-        const item = mediaItems[i];
-        const baseName = item?.fileName
-          ? path.basename(item.fileName)
-          : `item${item?.type === "video" ? ".mp4" : ".jpg"}`;
-        const savedName = `${i}-${baseName}`;
-        const mediaPath = path.join(projectDir, "media", savedName);
-        await writeFile(mediaPath, buffer);
-        mediaPaths.push(`media/${savedName}`);
+        const hash = hashBuffer(buffer);
+        const ext = path.extname(mediaItems[i]?.fileName ?? "") || (mediaItems[i]?.type === "video" ? ".mp4" : ".jpg");
+        const hashKey = `${hash}${ext}`;
+        const mediaPath = path.join(MEDIA_DIR, hashKey);
+        if (!seenHashes.has(hashKey)) {
+          try {
+            await writeFile(mediaPath, buffer, { flag: "wx" });
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+          }
+          seenHashes.add(hashKey);
+        }
+        mediaHashKeys.push(hashKey);
       }
     }
 
+    let musicHashKey: string | null = null;
     if (musicFile && musicFile.size > 0) {
       const bytes = await musicFile.arrayBuffer();
       const buffer = Buffer.from(bytes);
+      const hash = hashBuffer(buffer);
       const ext = path.extname(musicFileName) || ".mp3";
-      const musicPath = path.join(projectDir, `music${ext}`);
-      await writeFile(musicPath, buffer);
+      musicHashKey = `${hash}${ext}`;
+      const musicPath = path.join(MEDIA_DIR, musicHashKey);
+      try {
+        await writeFile(musicPath, buffer, { flag: "wx" });
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      }
     }
 
     const projectJson = {
@@ -100,11 +120,11 @@ export async function POST(request: NextRequest) {
       imagePositions,
       mediaItems: mediaItems.map((item: { order: number; type: string; durationInFrames: number; fileName: string; objectPosition: string }, i: number) => ({
         ...item,
-        savedPath: mediaPaths[i] ?? null,
+        hashKey: mediaHashKeys[i] ?? null,
       })),
       musicFileName: musicFile ? musicFileName : null,
       musicDuration: musicFile ? musicDuration : null,
-      musicSavedPath: musicFile ? `music${path.extname(musicFileName) || ".mp3"}` : null,
+      musicHashKey,
       savedAt: new Date().toISOString(),
     };
 

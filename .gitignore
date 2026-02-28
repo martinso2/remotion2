@@ -14,8 +14,9 @@
 # Production
 /build
 
-# Saved projects
+# Saved projects and media
 /data/projects
+/data/media
 
 # Misc
 .DS_Store

@@ -444,17 +444,16 @@ export function VideoCreator() {
         throw new Error(err.error ?? "Project not found");
       }
       const project = await res.json();
-      mediaItems.forEach((m) => m.url && URL.revokeObjectURL(m.url));
-      if (musicUrl) URL.revokeObjectURL(musicUrl);
       const base = `/api/projects/${encodeURIComponent(project.title)}`;
       const items: MediaItem[] = [];
       const sorted = [...(project.mediaItems ?? [])].sort(
         (a: { order?: number }, b: { order?: number }) => (a.order ?? 0) - (b.order ?? 0)
       );
       for (const m of sorted) {
-        const savedPath = m.savedPath ?? `media/${m.order}-${m.fileName ?? "item"}`;
-        const filename = savedPath.replace("media/", "");
-        const r = await fetch(`${base}/media/${encodeURIComponent(filename)}`);
+        const mediaUrl = m.hashKey
+          ? `/api/media/${encodeURIComponent(m.hashKey)}`
+          : `${base}/media/${encodeURIComponent((m.savedPath ?? `media/${m.order}-${m.fileName ?? "item"}`).replace(/^media\//, ""))}`;
+        const r = await fetch(mediaUrl);
         if (!r.ok) continue;
         const blob = await r.blob();
         const url = URL.createObjectURL(blob);
@@ -465,6 +464,8 @@ export function VideoCreator() {
           fileName: m.fileName,
         });
       }
+      mediaItems.forEach((m) => m.url && URL.revokeObjectURL(m.url));
+      if (musicUrl) URL.revokeObjectURL(musicUrl);
       setMediaItems(items);
       setImagePositions(
         (project.imagePositions ?? []).slice(0, items.length) ||
@@ -474,8 +475,12 @@ export function VideoCreator() {
       setDurationOption((project.durationOption as DurationOption) ?? durationOption);
       setFitToMusic(project.fitToMusic ?? false);
       setProjectTitle(project.title ?? title);
-      if (project.musicSavedPath) {
-        const musicRes = await fetch(`${base}/music`);
+      const musicKey = project.musicHashKey ?? project.musicSavedPath;
+      if (musicKey) {
+        const musicUrlToFetch = project.musicHashKey
+          ? `/api/media/${encodeURIComponent(project.musicHashKey)}`
+          : `${base}/music`;
+        const musicRes = await fetch(musicUrlToFetch);
         if (musicRes.ok) {
           const musicBlob = await musicRes.blob();
           const url = URL.createObjectURL(musicBlob);
