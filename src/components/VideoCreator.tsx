@@ -32,9 +32,9 @@ type Platform = "tiktok" | "fb-square" | "fb-video";
 
 const PLATFORMS: { id: Platform; label: string; width: number; height: number }[] =
   [
-    { id: "tiktok", label: "TikTok", width: 1080, height: 1920 },
-    { id: "fb-square", label: "FB Square", width: 1080, height: 1080 },
-    { id: "fb-video", label: "FB Video", width: 1920, height: 1080 },
+    { id: "tiktok", label: "Vertical Video", width: 1080, height: 1920 },
+    { id: "fb-square", label: "Square", width: 1080, height: 1080 },
+    { id: "fb-video", label: "Horizontal Video", width: 1920, height: 1080 },
   ];
 
 const IMAGE_POSITIONS = [
@@ -109,6 +109,10 @@ export function VideoCreator() {
   const [loadedMusicFileName, setLoadedMusicFileName] = useState<string | null>(null);
   const [isLoadingVideos, setIsLoadingVideos] = useState(false);
   const [videoLoadProgress, setVideoLoadProgress] = useState({ current: 0, total: 0 });
+  const [filmGrainEnabled, setFilmGrainEnabled] = useState(true);
+  const [filmGrainIntensity, setFilmGrainIntensity] = useState(0.065);
+  const [motionBlurEnabled, setMotionBlurEnabled] = useState(false);
+  const [motionBlurShutterAngle, setMotionBlurShutterAngle] = useState(180);
 
   const config = PLATFORMS.find((p) => p.id === platform) ?? PLATFORMS[0];
 
@@ -309,6 +313,10 @@ export function VideoCreator() {
         text: showMessage ? prompt || "Enter a prompt above" : "",
         showMessage,
         audioSrc: musicUrl ?? undefined,
+        filmGrainEnabled,
+        filmGrainIntensity,
+        motionBlurEnabled,
+        motionBlurShutterAngle,
       };
 
       const { getBlob } = await renderMediaOnWeb({
@@ -345,6 +353,10 @@ export function VideoCreator() {
     mediaItems,
     imagePositions,
     showMessage,
+    filmGrainEnabled,
+    filmGrainIntensity,
+    motionBlurEnabled,
+    motionBlurShutterAngle,
     prompt,
     musicUrl,
     durationInFrames,
@@ -549,13 +561,60 @@ export function VideoCreator() {
             </button>
           </>
         )}
-        {saveStatus && (
-          <span className="text-sm text-slate-400">{saveStatus}</span>
+        <button
+          type="button"
+          onClick={handleRender}
+          disabled={isRendering || durationInFrames < 1}
+          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {isRendering ? (
+            <span className="flex items-center gap-2">
+              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              {Math.round(renderProgress * 100)}%
+            </span>
+          ) : (
+            "Render to MP4"
+          )}
+        </button>
+        {renderError && (
+          <span className="text-sm text-red-400">{renderError}</span>
+        )}
+        {saveStatus && !renderError && (
+          <span className="text-sm text-green-400">{saveStatus}</span>
         )}
       </header>
       <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 h-full min-h-[calc(100vh-8rem)]">
       {/* Console */}
       <aside className="lg:w-80 flex-shrink-0 space-y-4">
+        <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+          <h2 className="text-sm font-medium text-slate-300 mb-3">
+            Platform
+          </h2>
+          <div className="space-y-2">
+            {PLATFORMS.map((p) => (
+              <label
+                key={p.id}
+                className="flex items-center gap-2 cursor-pointer group"
+              >
+                <input
+                  type="radio"
+                  name="platform"
+                  value={p.id}
+                  checked={platform === p.id}
+                  onChange={() => setPlatform(p.id)}
+                  className="w-4 h-4 text-slate-500 focus:ring-slate-500"
+                />
+                <span className="text-slate-300 group-hover:text-white">
+                  {p.label}
+                </span>
+                <span className="text-slate-500 text-xs">
+                  {p.width}×{p.height}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
         <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
           <h2 className="text-sm font-medium text-slate-300 mb-3">
             Images & Videos
@@ -729,59 +788,76 @@ export function VideoCreator() {
 
         <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
           <h2 className="text-sm font-medium text-slate-300 mb-3">
-            Platform
+            Film grain
           </h2>
-          <div className="space-y-2">
-            {PLATFORMS.map((p) => (
-              <label
-                key={p.id}
-                className="flex items-center gap-2 cursor-pointer group"
-              >
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={filmGrainEnabled}
+                onChange={(e) => setFilmGrainEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 text-slate-500 focus:ring-slate-500"
+              />
+              <span className="text-slate-300 text-sm">Enable film grain</span>
+            </label>
+            {filmGrainEnabled && (
+              <div className="space-y-2">
+                <label className="text-xs text-slate-500 block">
+                  Intensity: {(filmGrainIntensity * 100).toFixed(1)}%
+                </label>
                 <input
-                  type="radio"
-                  name="platform"
-                  value={p.id}
-                  checked={platform === p.id}
-                  onChange={() => setPlatform(p.id)}
-                  className="w-4 h-4 text-slate-500 focus:ring-slate-500"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  value={filmGrainIntensity}
+                  onChange={(e) => setFilmGrainIntensity(parseFloat(e.target.value))}
+                  className="w-full h-2 rounded-lg appearance-none bg-slate-700 accent-indigo-500"
                 />
-                <span className="text-slate-300 group-hover:text-white">
-                  {p.label}
-                </span>
-                <span className="text-slate-500 text-xs">
-                  {p.width}×{p.height}
-                </span>
-              </label>
-            ))}
+                <p className="text-xs text-slate-500">
+                  Effect visible in the main preview
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
           <h2 className="text-sm font-medium text-slate-300 mb-3">
-            Export
+            Motion blur
           </h2>
-          <button
-            type="button"
-            onClick={handleRender}
-            disabled={isRendering || durationInFrames < 1}
-            className="w-full rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isRendering ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                Rendering… {Math.round(renderProgress * 100)}%
-              </span>
-            ) : (
-              "Render to MP4"
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={motionBlurEnabled}
+                onChange={(e) => setMotionBlurEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 text-slate-500 focus:ring-slate-500"
+              />
+              <span className="text-slate-300 text-sm">Enable motion blur</span>
+            </label>
+            {motionBlurEnabled && (
+              <div className="space-y-2">
+                <label className="text-xs text-slate-500 block">
+                  Shutter angle: {motionBlurShutterAngle}°
+                </label>
+                <input
+                  type="range"
+                  min="15"
+                  max="360"
+                  step="15"
+                  value={motionBlurShutterAngle}
+                  onChange={(e) => setMotionBlurShutterAngle(parseInt(e.target.value, 10))}
+                  className="w-full h-2 rounded-lg appearance-none bg-slate-700 accent-indigo-500"
+                />
+                <p className="text-xs text-slate-500">
+                  180° = film-like, higher = more blur. May slow preview.
+                </p>
+              </div>
             )}
-          </button>
-          {renderError && (
-            <p className="mt-2 text-xs text-red-400">{renderError}</p>
-          )}
-          <p className="mt-2 text-xs text-slate-500">
-            Renders in your browser. Chrome or Edge recommended.
-          </p>
+          </div>
         </div>
+
       </aside>
 
       {/* Studio */}
@@ -806,6 +882,10 @@ export function VideoCreator() {
                 text: showMessage ? prompt || "Enter a prompt above" : "",
                 showMessage,
                 audioSrc: musicUrl ?? undefined,
+                filmGrainEnabled,
+                filmGrainIntensity,
+                motionBlurEnabled,
+                motionBlurShutterAngle,
               }}
               durationInFrames={durationInFrames}
               compositionWidth={config.width}

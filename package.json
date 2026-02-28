@@ -14,6 +14,7 @@
     "@remotion/bundler": "^4.0.0",
     "@remotion/cli": "^4.0.0",
     "@remotion/media": "4.0.429",
+    "@remotion/motion-blur": "4.0.429",
     "@remotion/player": "^4.0.0",
     "@remotion/tailwind-v4": "^4.0.0",
     "@remotion/transitions": "4.0.429",

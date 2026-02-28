@@ -1,4 +1,5 @@
 import { Audio, Video } from "@remotion/media";
+import { CameraMotionBlur } from "@remotion/motion-blur";
 import {
   AbsoluteFill,
   Img,
@@ -24,6 +25,10 @@ export type MediaGalleryWithAudioProps = {
   imagePositions?: string[];
   text?: string;
   audioSrc?: string;
+  filmGrainEnabled?: boolean;
+  filmGrainIntensity?: number;
+  motionBlurEnabled?: boolean;
+  motionBlurShutterAngle?: number;
 };
 
 export function calculateMediaGalleryDuration(mediaItems: MediaItem[]): number {
@@ -126,6 +131,10 @@ export const MediaGalleryWithAudio = ({
   imagePositions,
   text,
   audioSrc,
+  filmGrainEnabled = true,
+  filmGrainIntensity = 0.15,
+  motionBlurEnabled = false,
+  motionBlurShutterAngle = 180,
 }: MediaGalleryWithAudioProps) => {
   const { fps, durationInFrames } = useVideoConfig();
 
@@ -161,8 +170,18 @@ export const MediaGalleryWithAudio = ({
     };
   });
 
-  return (
-    <AbsoluteFill>
+  const frame = useCurrentFrame();
+  const intensity = Math.min(1, filmGrainIntensity ?? 0.25);
+  const showGrain = (filmGrainEnabled ?? true) && intensity > 0;
+  const k2 = 1 - intensity;
+  const k3 = intensity;
+  const filterId = `reelforge-grain-${String(intensity).replace(".", "-")}`;
+
+  const visualContent = (
+    <AbsoluteFill
+      key={filterId}
+      style={showGrain ? { filter: `url(#${filterId})` } : undefined}
+    >
       {segments.map((seg, i) => {
         const isFirst = i === 0;
         const isLast = i === segments.length - 1;
@@ -187,19 +206,6 @@ export const MediaGalleryWithAudio = ({
         );
       })}
 
-      {audioSrc && (
-        <Audio
-          src={audioSrc}
-          volume={(f) =>
-            interpolate(f, [fadeStart, durationInFrames], [1, 0], {
-              extrapolateLeft: "clamp",
-              extrapolateRight: "clamp",
-            })
-          }
-          trimAfter={durationInFrames}
-        />
-      )}
-
       {text && (
         <AbsoluteFill
           style={{
@@ -215,6 +221,66 @@ export const MediaGalleryWithAudio = ({
             {text}
           </div>
         </AbsoluteFill>
+      )}
+    </AbsoluteFill>
+  );
+
+  const wrappedVisual = motionBlurEnabled ? (
+    <CameraMotionBlur
+      shutterAngle={Math.max(1, motionBlurShutterAngle)}
+      samples={6}
+    >
+      {visualContent}
+    </CameraMotionBlur>
+  ) : (
+    visualContent
+  );
+
+  return (
+    <AbsoluteFill>
+      {showGrain && (
+        <svg width="0" height="0" style={{ position: "absolute" }}>
+          <defs>
+            <filter id={filterId} x="0" y="0" width="100%" height="100%">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.8"
+                numOctaves="4"
+                seed={frame}
+                result="noise"
+              />
+              <feColorMatrix in="noise" type="saturate" values="0" result="mono" />
+              <feComponentTransfer in="mono" result="contrast">
+                <feFuncR type="linear" slope="4" intercept="-1.5" />
+                <feFuncG type="linear" slope="4" intercept="-1.5" />
+                <feFuncB type="linear" slope="4" intercept="-1.5" />
+              </feComponentTransfer>
+              <feBlend in="SourceGraphic" in2="contrast" mode="soft-light" result="blended" />
+              <feComposite
+                in="SourceGraphic"
+                in2="blended"
+                operator="arithmetic"
+                k1="0"
+                k2={k2}
+                k3={k3}
+                k4="0"
+              />
+            </filter>
+          </defs>
+        </svg>
+      )}
+      {wrappedVisual}
+      {audioSrc && (
+        <Audio
+          src={audioSrc}
+          volume={(f) =>
+            interpolate(f, [fadeStart, durationInFrames], [1, 0], {
+              extrapolateLeft: "clamp",
+              extrapolateRight: "clamp",
+            })
+          }
+          trimAfter={durationInFrames}
+        />
       )}
     </AbsoluteFill>
   );
