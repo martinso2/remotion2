@@ -12,6 +12,7 @@ export type VideoCompositionProps = {
   filmGrainIntensity?: number;
   motionBlurEnabled?: boolean;
   motionBlurShutterAngle?: number;
+  dissolveDurationFrames?: number;
 };
 
 export const VideoComposition = ({
@@ -24,6 +25,7 @@ export const VideoComposition = ({
   filmGrainIntensity = 0.1,
   motionBlurEnabled = false,
   motionBlurShutterAngle = 180,
+  dissolveDurationFrames,
 }: VideoCompositionProps) => {
   if (mediaItems.length > 0) {
     // When motion blur is on: apply grain on top (sharp grain on blurred image).
@@ -38,6 +40,7 @@ export const VideoComposition = ({
       filmGrainIntensity,
       motionBlurEnabled,
       motionBlurShutterAngle,
+      dissolveDurationFrames,
     };
 
     let content = <MediaGalleryWithAudio {...mediaGalleryProps} />;

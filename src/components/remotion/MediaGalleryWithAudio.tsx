@@ -29,13 +29,18 @@ export type MediaGalleryWithAudioProps = {
   filmGrainIntensity?: number;
   motionBlurEnabled?: boolean;
   motionBlurShutterAngle?: number;
+  /** Crossfade/dissolve duration in frames between clips (default 15) */
+  dissolveDurationFrames?: number;
 };
 
-export function calculateMediaGalleryDuration(mediaItems: MediaItem[]): number {
+export function calculateMediaGalleryDuration(
+  mediaItems: MediaItem[],
+  dissolveDurationFrames: number = FADE_DURATION_FRAMES
+): number {
   if (mediaItems.length === 0) return 0;
   const total =
     mediaItems.reduce((sum, m) => sum + m.durationInFrames, 0) -
-    (mediaItems.length - 1) * FADE_DURATION_FRAMES;
+    (mediaItems.length - 1) * dissolveDurationFrames;
   return Math.max(0, total);
 }
 
@@ -53,6 +58,7 @@ function MediaSegment({
   isLast,
   objectPosition,
   muteVideo,
+  fadeDurationFrames,
 }: {
   seg: Segment;
   index: number;
@@ -60,22 +66,23 @@ function MediaSegment({
   isLast: boolean;
   objectPosition: string;
   muteVideo: boolean;
+  fadeDurationFrames: number;
 }) {
   const localFrame = useCurrentFrame();
   const durationInFrames = seg.durationInFrames;
 
   let opacity = 1;
-  if (!isFirst && localFrame < FADE_DURATION_FRAMES) {
+  if (!isFirst && localFrame < fadeDurationFrames) {
     opacity = interpolate(
       localFrame,
-      [0, FADE_DURATION_FRAMES],
+      [0, fadeDurationFrames],
       [0, 1],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
-  } else if (!isLast && localFrame > durationInFrames - FADE_DURATION_FRAMES) {
+  } else if (!isLast && localFrame > durationInFrames - fadeDurationFrames) {
     opacity = interpolate(
       localFrame,
-      [durationInFrames - FADE_DURATION_FRAMES, durationInFrames],
+      [durationInFrames - fadeDurationFrames, durationInFrames],
       [1, 0],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
@@ -135,6 +142,7 @@ export const MediaGalleryWithAudio = ({
   filmGrainIntensity = 0.15,
   motionBlurEnabled = false,
   motionBlurShutterAngle = 180,
+  dissolveDurationFrames = FADE_DURATION_FRAMES,
 }: MediaGalleryWithAudioProps) => {
   const { fps, durationInFrames } = useVideoConfig();
 
@@ -145,7 +153,7 @@ export const MediaGalleryWithAudio = ({
     return null;
   }
 
-  const naturalDuration = calculateMediaGalleryDuration(mediaItems);
+  const naturalDuration = calculateMediaGalleryDuration(mediaItems, dissolveDurationFrames);
   // Scale: < 1 = speed up (compress), > 1 = slow down (stretch to fill)
   const scale =
     naturalDuration > 0
@@ -155,12 +163,12 @@ export const MediaGalleryWithAudio = ({
   let currentStart = 0;
   const segments = mediaItems.map((item) => {
     const scaledDuration = Math.max(
-      FADE_DURATION_FRAMES,
+      dissolveDurationFrames,
       Math.round(item.durationInFrames * scale)
     );
     const startFrame = currentStart;
     const endFrame = startFrame + scaledDuration;
-    currentStart = endFrame - FADE_DURATION_FRAMES;
+    currentStart = endFrame - dissolveDurationFrames;
     return {
       ...item,
       durationInFrames: scaledDuration,
@@ -201,6 +209,7 @@ export const MediaGalleryWithAudio = ({
               isLast={isLast}
               objectPosition={objectPosition}
               muteVideo={!!audioSrc}
+              fadeDurationFrames={dissolveDurationFrames}
             />
           </Sequence>
         );

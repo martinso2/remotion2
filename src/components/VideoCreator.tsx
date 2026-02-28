@@ -14,7 +14,6 @@ function reorderArray<T>(arr: T[], fromIndex: number, toIndex: number): T[] {
 import {
   type MediaItem,
   calculateMediaGalleryDuration,
-  FADE_DURATION_FRAMES,
   IMAGE_DURATION_FRAMES,
 } from "./remotion/MediaGalleryWithAudio";
 
@@ -113,6 +112,7 @@ export function VideoCreator() {
   const [filmGrainIntensity, setFilmGrainIntensity] = useState(0.065);
   const [motionBlurEnabled, setMotionBlurEnabled] = useState(false);
   const [motionBlurShutterAngle, setMotionBlurShutterAngle] = useState(180);
+  const [dissolveDurationSeconds, setDissolveDurationSeconds] = useState(0.5);
 
   const config = PLATFORMS.find((p) => p.id === platform) ?? PLATFORMS[0];
 
@@ -249,8 +249,11 @@ export function VideoCreator() {
     setDurationOption("90");
   }, [musicUrl]);
 
+  const dissolveDurationFrames = Math.round(dissolveDurationSeconds * VIDEO_FPS);
   const mediaDuration =
-    mediaItems.length > 0 ? calculateMediaGalleryDuration(mediaItems) : 0;
+    mediaItems.length > 0
+      ? calculateMediaGalleryDuration(mediaItems, dissolveDurationFrames)
+      : 0;
 
   const durationSeconds =
     durationOption === "music" && musicDuration > 0
@@ -271,11 +274,11 @@ export function VideoCreator() {
       let startFrame = 0;
       for (let i = 0; i < index && i < mediaItems.length; i++) {
         startFrame +=
-          mediaItems[i].durationInFrames - FADE_DURATION_FRAMES;
+          mediaItems[i].durationInFrames - dissolveDurationFrames;
       }
-      return Math.round(startFrame + FADE_DURATION_FRAMES);
+      return Math.round(startFrame + dissolveDurationFrames);
     },
-    [mediaItems]
+    [mediaItems, dissolveDurationFrames]
   );
 
   const seekToMedia = useCallback(
@@ -317,6 +320,7 @@ export function VideoCreator() {
         filmGrainIntensity,
         motionBlurEnabled,
         motionBlurShutterAngle,
+        dissolveDurationFrames,
       };
 
       const { getBlob } = await renderMediaOnWeb({
@@ -357,6 +361,7 @@ export function VideoCreator() {
     filmGrainIntensity,
     motionBlurEnabled,
     motionBlurShutterAngle,
+    dissolveDurationFrames,
     prompt,
     musicUrl,
     durationInFrames,
@@ -621,9 +626,18 @@ export function VideoCreator() {
           </h2>
           <div className="space-y-2">
             <div className="flex flex-col gap-1">
-              <span className="text-xs text-slate-500">
-                15-frame crossfade between clips
-              </span>
+              <label className="text-xs text-slate-500">
+                Dissolve between clips: {dissolveDurationSeconds}s
+              </label>
+              <input
+                type="range"
+                min="0.25"
+                max="2"
+                step="0.25"
+                value={dissolveDurationSeconds}
+                onChange={(e) => setDissolveDurationSeconds(parseFloat(e.target.value))}
+                className="w-full h-2 rounded-lg appearance-none bg-slate-700 accent-indigo-500"
+              />
               <div className="flex gap-2">
                 <input
                   ref={fileInputRef}
@@ -886,6 +900,7 @@ export function VideoCreator() {
                 filmGrainIntensity,
                 motionBlurEnabled,
                 motionBlurShutterAngle,
+                dissolveDurationFrames,
               }}
               durationInFrames={durationInFrames}
               compositionWidth={config.width}
