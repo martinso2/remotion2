@@ -5,6 +5,7 @@ import { PromptTextWithAudio } from "./PromptTextWithAudio";
 export type VideoCompositionProps = {
   mediaItems: { type: "image" | "video"; url: string; durationInFrames: number }[];
   imagePositions?: string[];
+  imageScales?: number[];
   text: string;
   showMessage: boolean;
   audioSrc?: string;
@@ -18,6 +19,7 @@ export type VideoCompositionProps = {
 export const VideoComposition = ({
   mediaItems,
   imagePositions,
+  imageScales,
   text,
   showMessage,
   audioSrc,
@@ -34,6 +36,7 @@ export const VideoComposition = ({
     const mediaGalleryProps = {
       mediaItems,
       imagePositions,
+      imageScales,
       text: showMessage && text ? text : undefined,
       audioSrc,
       filmGrainEnabled: motionBlurEnabled ? false : filmGrainEnabled,

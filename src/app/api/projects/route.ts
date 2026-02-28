@@ -59,6 +59,9 @@ export async function POST(request: NextRequest) {
     const imagePositions = JSON.parse(
       (formData.get("imagePositions") as string) || "[]"
     );
+    const imageScales = JSON.parse(
+      (formData.get("imageScales") as string) || "[]"
+    );
     const mediaItems = JSON.parse(
       (formData.get("mediaItems") as string) || "[]"
     );
@@ -118,6 +121,7 @@ export async function POST(request: NextRequest) {
       durationOption,
       fitToMusic,
       imagePositions,
+      imageScales,
       mediaItems: mediaItems.map((item: { order: number; type: string; durationInFrames: number; fileName: string; objectPosition: string }, i: number) => ({
         ...item,
         hashKey: mediaHashKeys[i] ?? null,

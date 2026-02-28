@@ -23,6 +23,7 @@ export type MediaItem = {
 export type MediaGalleryWithAudioProps = {
   mediaItems: MediaItem[];
   imagePositions?: string[];
+  imageScales?: number[];
   text?: string;
   audioSrc?: string;
   filmGrainEnabled?: boolean;
@@ -57,6 +58,7 @@ function MediaSegment({
   isFirst,
   isLast,
   objectPosition,
+  objectScale,
   muteVideo,
   fadeDurationFrames,
 }: {
@@ -65,6 +67,7 @@ function MediaSegment({
   isFirst: boolean;
   isLast: boolean;
   objectPosition: string;
+  objectScale: number;
   muteVideo: boolean;
   fadeDurationFrames: number;
 }) {
@@ -88,11 +91,13 @@ function MediaSegment({
     );
   }
 
+  const baseScale = objectScale;
+
   if (seg.type === "video") {
     const orig = seg.originalDurationInFrames ?? durationInFrames;
     const playbackRate = orig < durationInFrames ? orig / durationInFrames : 1;
     return (
-      <AbsoluteFill style={{ opacity }}>
+      <AbsoluteFill style={{ opacity, overflow: "hidden" }}>
         <Video
           src={seg.url}
           trimAfter={durationInFrames}
@@ -103,6 +108,7 @@ function MediaSegment({
             height: "100%",
             objectFit: "cover",
             objectPosition,
+            transform: `scale(${baseScale})`,
           }}
         />
       </AbsoluteFill>
@@ -110,7 +116,7 @@ function MediaSegment({
   }
 
   const zoomIn = index % 2 === 0;
-  const scale = interpolate(
+  const kenBurnsScale = interpolate(
     localFrame,
     [0, durationInFrames],
     zoomIn ? [1, 1.08] : [1.08, 1],
@@ -118,7 +124,7 @@ function MediaSegment({
   );
 
   return (
-    <AbsoluteFill style={{ opacity }}>
+    <AbsoluteFill style={{ opacity, overflow: "hidden" }}>
       <Img
         src={seg.url}
         style={{
@@ -126,7 +132,7 @@ function MediaSegment({
           height: "100%",
           objectFit: "cover",
           objectPosition,
-          transform: `scale(${scale})`,
+          transform: `scale(${kenBurnsScale * baseScale})`,
         }}
       />
     </AbsoluteFill>
@@ -136,6 +142,7 @@ function MediaSegment({
 export const MediaGalleryWithAudio = ({
   mediaItems,
   imagePositions,
+  imageScales,
   text,
   audioSrc,
   filmGrainEnabled = true,
@@ -194,6 +201,7 @@ export const MediaGalleryWithAudio = ({
         const isFirst = i === 0;
         const isLast = i === segments.length - 1;
         const objectPosition = imagePositions?.[i] ?? "top center";
+        const objectScale = imageScales?.[i] ?? 1;
 
         return (
           <Sequence
@@ -208,6 +216,7 @@ export const MediaGalleryWithAudio = ({
               isFirst={isFirst}
               isLast={isLast}
               objectPosition={objectPosition}
+              objectScale={objectScale}
               muteVideo={!!audioSrc}
               fadeDurationFrames={dissolveDurationFrames}
             />

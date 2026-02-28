@@ -16,6 +16,7 @@ import {
   calculateMediaGalleryDuration,
   IMAGE_DURATION_FRAMES,
 } from "./remotion/MediaGalleryWithAudio";
+import { ImagePositionEditor } from "./ImagePositionEditor";
 
 const VIDEO_FPS = 30;
 
@@ -35,18 +36,6 @@ const PLATFORMS: { id: Platform; label: string; width: number; height: number }[
     { id: "fb-square", label: "Square", width: 1080, height: 1080 },
     { id: "fb-video", label: "Horizontal Video", width: 1920, height: 1080 },
   ];
-
-const IMAGE_POSITIONS = [
-  { value: "top left", label: "Top left" },
-  { value: "top center", label: "Top center" },
-  { value: "top right", label: "Top right" },
-  { value: "center left", label: "Center left" },
-  { value: "center center", label: "Center" },
-  { value: "center right", label: "Center right" },
-  { value: "bottom left", label: "Bottom left" },
-  { value: "bottom center", label: "Bottom center" },
-  { value: "bottom right", label: "Bottom right" },
-] as const;
 
 function getAudioDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -89,6 +78,7 @@ export function VideoCreator() {
   const [durationOption, setDurationOption] = useState<DurationOption>("90");
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [imagePositions, setImagePositions] = useState<string[]>([]);
+  const [imageScales, setImageScales] = useState<number[]>([]);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const [showMessage, setShowMessage] = useState(false);
   const [fitToMusic, setFitToMusic] = useState(false);
@@ -113,6 +103,7 @@ export function VideoCreator() {
   const [motionBlurEnabled, setMotionBlurEnabled] = useState(false);
   const [motionBlurShutterAngle, setMotionBlurShutterAngle] = useState(180);
   const [dissolveDurationSeconds, setDissolveDurationSeconds] = useState(0.5);
+  const [positionEditorIndex, setPositionEditorIndex] = useState<number | null>(null);
 
   const config = PLATFORMS.find((p) => p.id === platform) ?? PLATFORMS[0];
 
@@ -139,6 +130,7 @@ export function VideoCreator() {
         ...prev,
         ...Array(files.length).fill("top center"),
       ]);
+      setImageScales((prev) => [...prev, ...Array(files.length).fill(1)]);
       input.value = "";
     },
     []
@@ -172,6 +164,7 @@ export function VideoCreator() {
           ...prev,
           ...Array(items.length).fill("top center"),
         ]);
+        setImageScales((prev) => [...prev, ...Array(items.length).fill(1)]);
       }
       input.value = "";
       setIsLoadingVideos(false);
@@ -187,6 +180,7 @@ export function VideoCreator() {
       return prev.filter((_, i) => i !== index);
     });
     setImagePositions((prev) => prev.filter((_, i) => i !== index));
+    setImageScales((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const removeAllMedia = useCallback(() => {
@@ -195,17 +189,27 @@ export function VideoCreator() {
     });
     setMediaItems([]);
     setImagePositions([]);
+    setImageScales([]);
   }, [mediaItems]);
 
   const reorderMediaItems = useCallback((fromIndex: number, toIndex: number) => {
     setMediaItems((prev) => reorderArray(prev, fromIndex, toIndex));
     setImagePositions((prev) => reorderArray(prev, fromIndex, toIndex));
+    setImageScales((prev) => reorderArray(prev, fromIndex, toIndex));
   }, []);
 
   const setImagePosition = useCallback((index: number, position: string) => {
     setImagePositions((prev) => {
       const next = [...prev];
       next[index] = position;
+      return next;
+    });
+  }, []);
+
+  const setImageScale = useCallback((index: number, scale: number) => {
+    setImageScales((prev) => {
+      const next = [...prev];
+      next[index] = scale;
       return next;
     });
   }, []);
@@ -313,6 +317,10 @@ export function VideoCreator() {
           imagePositions.length === mediaItems.length
             ? imagePositions
             : mediaItems.map(() => "top center"),
+        imageScales:
+          imageScales.length === mediaItems.length
+            ? imageScales
+            : mediaItems.map(() => 1),
         text: showMessage ? prompt || "Enter a prompt above" : "",
         showMessage,
         audioSrc: musicUrl ?? undefined,
@@ -356,6 +364,7 @@ export function VideoCreator() {
   }, [
     mediaItems,
     imagePositions,
+    imageScales,
     showMessage,
     filmGrainEnabled,
     filmGrainIntensity,
@@ -387,6 +396,7 @@ export function VideoCreator() {
       formData.append("durationOption", durationOption);
       formData.append("fitToMusic", String(fitToMusic));
       formData.append("imagePositions", JSON.stringify(imagePositions));
+      formData.append("imageScales", JSON.stringify(imageScales));
       formData.append(
         "mediaItems",
         JSON.stringify(
@@ -444,6 +454,7 @@ export function VideoCreator() {
     durationOption,
     fitToMusic,
     imagePositions,
+    imageScales,
     mediaItems,
     musicFile,
     musicDuration,
@@ -487,6 +498,10 @@ export function VideoCreator() {
       setImagePositions(
         (project.imagePositions ?? []).slice(0, items.length) ||
           items.map(() => "top center")
+      );
+      setImageScales(
+        (project.imageScales ?? []).slice(0, items.length) ||
+          items.map(() => 1)
       );
       setPlatform((project.platform as Platform) ?? platform);
       setDurationOption((project.durationOption as DurationOption) ?? durationOption);
@@ -893,6 +908,10 @@ export function VideoCreator() {
                   imagePositions.length === mediaItems.length
                     ? imagePositions
                     : mediaItems.map(() => "top center"),
+                imageScales:
+                  imageScales.length === mediaItems.length
+                    ? imageScales
+                    : mediaItems.map(() => 1),
                 text: showMessage ? prompt || "Enter a prompt above" : "",
                 showMessage,
                 audioSrc: musicUrl ?? undefined,
@@ -917,7 +936,7 @@ export function VideoCreator() {
           {mediaItems.length > 0 && (
             <div className="border-t border-slate-700 px-4 py-3 bg-slate-900/30">
               <p className="text-xs text-slate-500 mb-2">
-                Timeline — drag to reorder, × to remove, dropdown to adjust crop
+                Timeline — drag to reorder, × to remove, double-click to adjust position & scale
               </p>
               <div className="flex gap-2 overflow-x-auto pb-1 items-start">
                 {mediaItems.map((item, index) => (
@@ -953,6 +972,10 @@ export function VideoCreator() {
                         setDraggedIndex(null);
                         setDropTargetIndex(null);
                       }}
+                      onDoubleClick={() => {
+                        seekToMedia(index);
+                        setPositionEditorIndex(index);
+                      }}
                       className={`
                         relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-slate-600 hover:border-slate-500 cursor-grab active:cursor-grabbing
                         transition-all duration-150
@@ -965,6 +988,7 @@ export function VideoCreator() {
                           e.stopPropagation();
                           removeMediaItem(index);
                         }}
+                        onDoubleClick={(e) => e.stopPropagation()}
                         className="absolute top-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-red-600 text-xs leading-none"
                         aria-label={`Remove ${index + 1}`}
                       >
@@ -994,22 +1018,6 @@ export function VideoCreator() {
                         {index + 1}
                       </span>
                     </div>
-                    <select
-                      value={imagePositions[index] ?? "top center"}
-                      onChange={(e) => setImagePosition(index, e.target.value)}
-                      onFocus={() => seekToMedia(index)}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        seekToMedia(index);
-                      }}
-                      className="w-full min-w-0 max-w-[90px] rounded border border-slate-600 bg-slate-800 px-1 py-0.5 text-[10px] text-slate-300 focus:border-slate-500 focus:outline-none"
-                    >
-                      {IMAGE_POSITIONS.map((p) => (
-                        <option key={p.value} value={p.value}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
                   </div>
                 ))}
               </div>
@@ -1017,6 +1025,23 @@ export function VideoCreator() {
           )}
         </div>
       </section>
+
+      {positionEditorIndex !== null && mediaItems[positionEditorIndex] && (
+        <ImagePositionEditor
+          isOpen={true}
+          onClose={() => setPositionEditorIndex(null)}
+          onSave={(position, scale) => {
+            setImagePosition(positionEditorIndex, position);
+            setImageScale(positionEditorIndex, scale);
+          }}
+          mediaUrl={mediaItems[positionEditorIndex].url}
+          mediaType={mediaItems[positionEditorIndex].type}
+          currentPosition={imagePositions[positionEditorIndex] ?? "top center"}
+          currentScale={imageScales[positionEditorIndex] ?? 1}
+          frameWidth={config.width}
+          frameHeight={config.height}
+        />
+      )}
     </div>
     </>
   );
