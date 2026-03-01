@@ -1017,7 +1017,7 @@ export function VideoCreator() {
           </div>
           <div className="p-4 flex justify-center bg-slate-950/50">
             {positionEditorIndex !== null && mediaItems[positionEditorIndex] ? (
-              <div className="flex flex-col items-center w-full max-w-[640px]">
+              <div className="flex w-full max-w-[1060px]">
                 <InlineMediaEditor
                   mediaUrl={mediaItems[positionEditorIndex].url}
                   mediaType={mediaItems[positionEditorIndex].type}
@@ -1063,7 +1063,7 @@ export function VideoCreator() {
                 controls
                 style={{
                   width: "100%",
-                  maxWidth: config.width > config.height ? 640 : 320,
+                  maxWidth: Math.min(820, config.width),
                 }}
               />
             )}

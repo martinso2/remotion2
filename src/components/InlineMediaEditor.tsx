@@ -193,41 +193,43 @@ export function InlineMediaEditor({
   const positionStyle = `${position.x}% ${position.y}%`;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div
-        ref={containerRef}
-        className="relative overflow-hidden rounded-lg border-2 border-indigo-500/50 bg-slate-950"
-        style={{
-          width: "100%",
-          maxWidth: Math.min(640, frameWidth),
-          aspectRatio: `${frameWidth} / ${frameHeight}`,
-        }}
-      >
-        {mediaType === "image" ? (
-          <div
-            className="absolute inset-0 select-none"
-            style={{
-              backgroundImage: `url(${mediaUrl})`,
-              backgroundSize: `${100 * scale}% ${100 * scale}%`,
-              backgroundPosition: positionStyle,
-              backgroundRepeat: "no-repeat",
-              cursor: isDragging ? "grabbing" : "grab",
-            }}
-            onMouseDown={handleMouseDown}
-          />
-        ) : (
-          <VideoCanvasLayer
-            containerRef={containerRef}
-            mediaUrl={mediaUrl}
-            position={position}
-            scale={scale}
-            isDragging={isDragging}
-            onMouseDown={handleMouseDown}
-          />
-        )}
+    <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
+      <div className="w-full flex-1 min-w-0">
+        <div
+          ref={containerRef}
+          className="relative overflow-hidden rounded-lg border-2 border-indigo-500/50 bg-slate-950"
+          style={{
+            width: "100%",
+            maxWidth: Math.min(820, frameWidth),
+            aspectRatio: `${frameWidth} / ${frameHeight}`,
+          }}
+        >
+          {mediaType === "image" ? (
+            <div
+              className="absolute inset-0 select-none"
+              style={{
+                backgroundImage: `url(${mediaUrl})`,
+                backgroundSize: `${100 * scale}% ${100 * scale}%`,
+                backgroundPosition: positionStyle,
+                backgroundRepeat: "no-repeat",
+                cursor: isDragging ? "grabbing" : "grab",
+              }}
+              onMouseDown={handleMouseDown}
+            />
+          ) : (
+            <VideoCanvasLayer
+              containerRef={containerRef}
+              mediaUrl={mediaUrl}
+              position={position}
+              scale={scale}
+              isDragging={isDragging}
+              onMouseDown={handleMouseDown}
+            />
+          )}
+        </div>
       </div>
 
-      <div className="flex flex-col gap-3 px-1">
+      <div className="flex w-full flex-col gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3 lg:w-72 lg:flex-shrink-0">
         <div>
           <label className="mb-1 block text-xs text-slate-400">
             Zoom: {Math.round(scale * 100)}%
@@ -245,7 +247,7 @@ export function InlineMediaEditor({
         <p className="text-xs text-slate-500">
           Position: {Math.round(position.x)}% × {Math.round(position.y)}% — drag the image to reposition
         </p>
-        <div className="flex gap-2">
+        <div className="flex gap-2 lg:flex-col">
           <button
             type="button"
             onClick={onCancel}
