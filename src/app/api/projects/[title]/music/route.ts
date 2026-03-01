@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readdir, readFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import path from "path";
 
 function sanitizeTitle(title: string): string {
@@ -14,16 +14,24 @@ export async function GET(
     const { title } = await params;
     const safeTitle = sanitizeTitle(title);
     const projectDir = path.join(process.cwd(), "data", "projects", safeTitle);
-    const files = await readdir(projectDir);
-    const musicFile = files.find(
-      (f) => f.startsWith("music") && !f.endsWith(".json")
-    );
-    if (!musicFile) {
+    const projectJsonPath = path.join(projectDir, "project.json");
+    const projectRaw = await readFile(projectJsonPath, "utf-8");
+    const project = JSON.parse(projectRaw) as {
+      musicSavedPath?: string | null;
+      musicFileName?: string | null;
+    };
+
+    const relativeMusicPath = project.musicSavedPath
+      ? project.musicSavedPath
+      : project.musicFileName
+        ? `music/${project.musicFileName}`
+        : null;
+    if (!relativeMusicPath) {
       return new NextResponse(null, { status: 404 });
     }
-    const filePath = path.join(projectDir, musicFile);
+    const filePath = path.join(projectDir, relativeMusicPath);
     const buffer = await readFile(filePath);
-    const ext = path.extname(musicFile).toLowerCase();
+    const ext = path.extname(filePath).toLowerCase();
     const mime: Record<string, string> = {
       ".mp3": "audio/mpeg",
       ".wav": "audio/wav",

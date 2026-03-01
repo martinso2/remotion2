@@ -83,7 +83,7 @@ export const ImageGalleryWithAudio = ({
         );
 
         const objectPosition =
-          imagePositions?.[i] ?? "top center";
+          imagePositions?.[i] ?? "center center";
 
         return (
           <AbsoluteFill key={i} style={{ opacity }}>

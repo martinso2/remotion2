@@ -186,6 +186,9 @@ export function InlineMediaEditor({
   const handleSave = useCallback(() => {
     onSave(toPositionString(positionRef.current.x, positionRef.current.y), scaleRef.current);
   }, [onSave]);
+  const handleResetPosition = useCallback(() => {
+    setPosition({ x: 50, y: 50 });
+  }, []);
 
   const positionStyle = `${position.x}% ${position.y}%`;
 
@@ -249,6 +252,13 @@ export function InlineMediaEditor({
             className="rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700"
           >
             Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleResetPosition}
+            className="rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm text-slate-200 hover:bg-slate-700"
+          >
+            Reset center
           </button>
           <button
             type="button"

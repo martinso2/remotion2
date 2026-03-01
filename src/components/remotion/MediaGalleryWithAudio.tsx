@@ -11,6 +11,7 @@ import {
 
 export const IMAGE_DURATION_FRAMES = 120;
 export const FADE_DURATION_FRAMES = 15;
+export const END_FADE_SECONDS = 5;
 
 export type MediaItem = {
   type: "image" | "video";
@@ -52,6 +53,16 @@ type Segment = MediaItem & {
   originalDurationInFrames?: number;
 };
 
+/** Parse position string to {x, y} in 0-100. Web renderer ignores object-position, so we use transform instead. */
+function parsePosition(pos: string): { x: number; y: number } {
+  const pctMatch = pos.match(/^(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+  if (pctMatch) return { x: parseFloat(pctMatch[1]), y: parseFloat(pctMatch[2]) };
+  const parts = pos.trim().toLowerCase().split(/\s+/);
+  const y = parts.includes("top") ? 0 : parts.includes("bottom") ? 100 : 50;
+  const x = parts.includes("left") ? 0 : parts.includes("right") ? 100 : 50;
+  return { x, y };
+}
+
 function MediaSegment({
   seg,
   index,
@@ -92,25 +103,36 @@ function MediaSegment({
   }
 
   const baseScale = objectScale;
+  const { x, y } = parsePosition(objectPosition);
+  const translateX = x - 50;
+  const translateY = y - 50;
 
   if (seg.type === "video") {
     const orig = seg.originalDurationInFrames ?? durationInFrames;
     const playbackRate = orig < durationInFrames ? orig / durationInFrames : 1;
     return (
       <AbsoluteFill style={{ opacity, overflow: "hidden" }}>
-        <Video
-          src={seg.url}
-          trimAfter={durationInFrames}
-          playbackRate={playbackRate}
-          muted={muteVideo}
+        <div
           style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            objectPosition,
-            transform: `scale(${baseScale})`,
+            position: "absolute",
+            inset: 0,
+            overflow: "hidden",
+            transform: `translate(${translateX}%, ${translateY}%) scale(${baseScale})`,
+            transformOrigin: "center center",
           }}
-        />
+        >
+          <Video
+            src={seg.url}
+            trimAfter={durationInFrames}
+            playbackRate={playbackRate}
+            muted={muteVideo}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
+          />
+        </div>
       </AbsoluteFill>
     );
   }
@@ -125,16 +147,24 @@ function MediaSegment({
 
   return (
     <AbsoluteFill style={{ opacity, overflow: "hidden" }}>
-      <Img
-        src={seg.url}
+      <div
         style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          objectPosition,
-          transform: `scale(${kenBurnsScale * baseScale})`,
+          position: "absolute",
+          inset: 0,
+          overflow: "hidden",
+          transform: `translate(${translateX}%, ${translateY}%) scale(${kenBurnsScale * baseScale})`,
+          transformOrigin: "center center",
         }}
-      />
+      >
+        <Img
+          src={seg.url}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+      </div>
     </AbsoluteFill>
   );
 }
@@ -155,6 +185,8 @@ export const MediaGalleryWithAudio = ({
 
   const fadeDurationFrames = 1.5 * fps;
   const fadeStart = Math.max(0, durationInFrames - fadeDurationFrames);
+  const endFadeFrames = Math.round(END_FADE_SECONDS * fps);
+  const endFadeStart = Math.max(0, durationInFrames - endFadeFrames);
 
   if (mediaItems.length === 0) {
     return null;
@@ -200,7 +232,7 @@ export const MediaGalleryWithAudio = ({
       {segments.map((seg, i) => {
         const isFirst = i === 0;
         const isLast = i === segments.length - 1;
-        const objectPosition = imagePositions?.[i] ?? "top center";
+        const objectPosition = imagePositions?.[i] ?? "center center";
         const objectScale = imageScales?.[i] ?? 1;
 
         return (
@@ -240,6 +272,18 @@ export const MediaGalleryWithAudio = ({
           </div>
         </AbsoluteFill>
       )}
+      <AbsoluteFill
+        style={{
+          backgroundColor: "black",
+          opacity: interpolate(
+            frame,
+            [endFadeStart, durationInFrames],
+            [0, 1],
+            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+          ),
+          pointerEvents: "none",
+        }}
+      />
     </AbsoluteFill>
   );
 

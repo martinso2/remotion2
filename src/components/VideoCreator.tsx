@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { canRenderMediaOnWeb, renderMediaOnWeb } from "@remotion/web-renderer";
 import { Player, PlayerRef } from "@remotion/player";
 import { VideoComposition } from "./remotion/VideoComposition";
@@ -19,6 +19,7 @@ import {
 import { InlineMediaEditor } from "./InlineMediaEditor";
 
 const VIDEO_FPS = 30;
+const END_TAIL_SECONDS = 5;
 
 type DurationOption = "music" | "60" | "90" | "120";
 const DURATION_OPTIONS: { id: DurationOption; label: string; seconds: number }[] = [
@@ -94,6 +95,7 @@ export function VideoCreator() {
   const [projectList, setProjectList] = useState<{ title: string }[]>([]);
   const [selectedProjectToLoad, setSelectedProjectToLoad] = useState("");
   const [isLoadingProject, setIsLoadingProject] = useState(false);
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
   const [loadedMusicFileName, setLoadedMusicFileName] = useState<string | null>(null);
   const [isLoadingVideos, setIsLoadingVideos] = useState(false);
   const [videoLoadProgress, setVideoLoadProgress] = useState({ current: 0, total: 0 });
@@ -103,11 +105,11 @@ export function VideoCreator() {
   const [motionBlurShutterAngle, setMotionBlurShutterAngle] = useState(180);
   const [dissolveDurationSeconds, setDissolveDurationSeconds] = useState(0.5);
   const [positionEditorIndex, setPositionEditorIndex] = useState<number | null>(null);
-  const skipLoadTransformsRef = useRef(false);
+  const [pausedTimelineIndex, setPausedTimelineIndex] = useState<number | null>(null);
 
   const config = PLATFORMS.find((p) => p.id === platform) ?? PLATFORMS[0];
 
-  const getTransform = useCallback((i: number) => mediaTransforms[i] ?? { position: "top center", scale: 1 }, [mediaTransforms]);
+  const getTransform = useCallback((i: number) => mediaTransforms[i] ?? { position: "center center", scale: 1 }, [mediaTransforms]);
   const [transformsKey, setTransformsKey] = useState(0);
 
   useEffect(() => {
@@ -115,42 +117,6 @@ export function VideoCreator() {
       .then((r) => r.json())
       .then((data) => setProjectList(Array.isArray(data) ? data : []))
       .catch(() => setProjectList([]));
-  }, []);
-
-  const loadTransformsFromFile = useCallback(() => {
-    fetch("/api/transforms")
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setMediaTransforms((prev) => {
-            const merged = prev.length > 0 ? [...prev] : [];
-            for (let i = 0; i < data.length; i++) {
-              if (!merged[i]) merged[i] = { position: "top center", scale: 1 };
-              merged[i] = data[i];
-            }
-            return merged;
-          });
-          setTransformsKey((k) => k + 1);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (mediaItems.length === 0) return;
-    if (skipLoadTransformsRef.current) {
-      skipLoadTransformsRef.current = false;
-      return;
-    }
-    loadTransformsFromFile();
-  }, [mediaItems.length, loadTransformsFromFile]);
-
-  const saveTransformsToFile = useCallback(async (transforms: Array<{ position: string; scale: number }>) => {
-    await fetch("/api/transforms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(transforms),
-    });
   }, []);
 
   const handleImagesChange = useCallback(
@@ -167,7 +133,7 @@ export function VideoCreator() {
       setMediaItems((prev) => [...prev, ...items]);
       setMediaTransforms((prev) => [
         ...prev,
-        ...Array(files.length).fill(null).map(() => ({ position: "top center", scale: 1 })),
+        ...Array(files.length).fill(null).map(() => ({ position: "center center", scale: 1 })),
       ]);
       input.value = "";
     },
@@ -200,7 +166,7 @@ export function VideoCreator() {
         setMediaItems((prev) => [...prev, ...items]);
         setMediaTransforms((prev) => [
           ...prev,
-          ...Array(items.length).fill(null).map(() => ({ position: "top center", scale: 1 })),
+          ...Array(items.length).fill(null).map(() => ({ position: "center center", scale: 1 })),
         ]);
       }
       input.value = "";
@@ -235,7 +201,7 @@ export function VideoCreator() {
   const setMediaTransform = useCallback((index: number, position: string, scale: number) => {
     setMediaTransforms((prev) => {
       const next = [...prev];
-      while (next.length <= index) next.push({ position: "top center", scale: 1 });
+      while (next.length <= index) next.push({ position: "center center", scale: 1 });
       next[index] = { position, scale };
       return next;
     });
@@ -293,12 +259,101 @@ export function VideoCreator() {
   const textDuration = Math.max(30, Math.ceil(durationSeconds * VIDEO_FPS));
 
   const musicDurationFrames = Math.ceil(musicDuration * VIDEO_FPS);
-  const durationInFrames =
+  const baseDurationInFrames =
     fitToMusic && musicDuration > 0
       ? musicDurationFrames
       : mediaItems.length > 0
         ? mediaDuration
         : textDuration;
+  const endTailFrames = mediaItems.length > 0 ? END_TAIL_SECONDS * VIDEO_FPS : 0;
+  const durationInFrames = baseDurationInFrames + endTailFrames;
+
+  const timelineSegments = useMemo(() => {
+    if (mediaItems.length === 0) return [] as Array<{ start: number; end: number }>;
+    const naturalDuration = calculateMediaGalleryDuration(mediaItems, dissolveDurationFrames);
+    const stretch = naturalDuration > 0 ? durationInFrames / naturalDuration : 1;
+    let start = 0;
+    return mediaItems.map((item) => {
+      const scaledDuration = Math.max(
+        dissolveDurationFrames,
+        Math.round(item.durationInFrames * stretch)
+      );
+      const segment = { start, end: start + scaledDuration };
+      start = segment.end - dissolveDurationFrames;
+      return segment;
+    });
+  }, [mediaItems, dissolveDurationFrames, durationInFrames]);
+
+  const getTimelineIndexForFrame = useCallback(
+    (frame: number) => {
+      if (timelineSegments.length === 0) return null;
+      const clampedFrame = Math.max(0, Math.min(durationInFrames - 1, frame));
+      for (let i = 0; i < timelineSegments.length; i++) {
+        const seg = timelineSegments[i];
+        if (clampedFrame >= seg.start && clampedFrame < seg.end) return i;
+      }
+      return timelineSegments.length - 1;
+    },
+    [timelineSegments, durationInFrames]
+  );
+
+  useEffect(() => {
+    if (positionEditorIndex !== null || mediaItems.length === 0) {
+      setPausedTimelineIndex(null);
+      return;
+    }
+
+    const player = playerRef.current as unknown as {
+      isPlaying?: () => boolean;
+      getCurrentFrame?: () => number;
+      addEventListener?: (name: string, cb: () => void) => void;
+      removeEventListener?: (name: string, cb: () => void) => void;
+    } | null;
+    if (!player?.getCurrentFrame) return;
+
+    let pollTimer: number | null = null;
+    const updateFromCurrentFrame = () => {
+      const frame = player.getCurrentFrame?.();
+      if (typeof frame !== "number") return;
+      setPausedTimelineIndex(getTimelineIndexForFrame(frame));
+    };
+    const startPausedPolling = () => {
+      if (pollTimer !== null) return;
+      updateFromCurrentFrame();
+      pollTimer = window.setInterval(updateFromCurrentFrame, 120);
+    };
+    const stopPausedPolling = () => {
+      if (pollTimer === null) return;
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    };
+    const syncPollingToPlayback = () => {
+      if (player.isPlaying?.()) {
+        stopPausedPolling();
+        setPausedTimelineIndex(null);
+      } else {
+        startPausedPolling();
+      }
+    };
+
+    const onPlay = () => syncPollingToPlayback();
+    const onPause = () => syncPollingToPlayback();
+    const onTimeUpdate = () => {
+      if (!player.isPlaying?.()) updateFromCurrentFrame();
+    };
+
+    player.addEventListener?.("play", onPlay);
+    player.addEventListener?.("pause", onPause);
+    player.addEventListener?.("timeupdate", onTimeUpdate);
+    syncPollingToPlayback();
+
+    return () => {
+      stopPausedPolling();
+      player.removeEventListener?.("play", onPlay);
+      player.removeEventListener?.("pause", onPause);
+      player.removeEventListener?.("timeupdate", onTimeUpdate);
+    };
+  }, [positionEditorIndex, mediaItems.length, getTimelineIndexForFrame, transformsKey]);
 
   const getMediaStartFrame = useCallback(
     (index: number) => {
@@ -515,14 +570,12 @@ export function VideoCreator() {
       }
       mediaItems.forEach((m) => m.url && URL.revokeObjectURL(m.url));
       if (musicUrl) URL.revokeObjectURL(musicUrl);
-      skipLoadTransformsRef.current = true;
       setMediaItems(items);
       const projectTransforms = items.map((_: unknown, i: number) => ({
-        position: (project.imagePositions ?? [])[i] ?? "top center",
+        position: (project.imagePositions ?? [])[i] ?? "center center",
         scale: (project.imageScales ?? [])[i] ?? 1,
       }));
       setMediaTransforms(projectTransforms);
-      saveTransformsToFile(projectTransforms).catch(() => {});
       setPlatform((project.platform as Platform) ?? platform);
       setDurationOption((project.durationOption as DurationOption) ?? durationOption);
       setFitToMusic(project.fitToMusic ?? false);
@@ -557,6 +610,40 @@ export function VideoCreator() {
       setIsLoadingProject(false);
     }
   }, [selectedProjectToLoad, musicUrl, mediaItems, platform, durationOption]);
+
+  const handleDeleteProject = useCallback(async () => {
+    const title = selectedProjectToLoad.trim();
+    if (!title) return;
+    const confirmed = window.confirm(
+      `Delete project "${title}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setIsDeletingProject(true);
+    setSaveStatus(null);
+    try {
+      const res = await fetch(`/api/projects?title=${encodeURIComponent(title)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to delete project");
+      }
+
+      setProjectList((prev) => prev.filter((p) => p.title !== title));
+      setSelectedProjectToLoad("");
+      if (projectTitle.trim() === title) {
+        setProjectTitle("");
+      }
+      setSaveStatus("Project deleted");
+    } catch (err) {
+      setSaveStatus(
+        err instanceof Error ? err.message : "Failed to delete project"
+      );
+    } finally {
+      setIsDeletingProject(false);
+    }
+  }, [selectedProjectToLoad, projectTitle]);
 
   return (
     <>
@@ -598,6 +685,14 @@ export function VideoCreator() {
               className="rounded-md border border-slate-600 bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {isLoadingProject ? "Loading…" : "Load"}
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteProject}
+              disabled={!selectedProjectToLoad || isDeletingProject}
+              className="rounded-md border border-red-500/60 bg-red-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isDeletingProject ? "Deleting…" : "Delete"}
             </button>
           </>
         )}
@@ -931,11 +1026,12 @@ export function VideoCreator() {
                   frameWidth={config.width}
                   frameHeight={config.height}
                   onSave={async (position, scale) => {
-                    const newTransforms = [...mediaTransforms];
-                    while (newTransforms.length <= positionEditorIndex) newTransforms.push({ position: "top center", scale: 1 });
-                    newTransforms[positionEditorIndex] = { position, scale };
-                    setMediaTransforms(newTransforms);
-                    await saveTransformsToFile(newTransforms);
+                    setMediaTransforms((prev) => {
+                      const next = [...prev];
+                      while (next.length <= positionEditorIndex) next.push({ position: "center center", scale: 1 });
+                      next[positionEditorIndex] = { position, scale };
+                      return next;
+                    });
                     setTransformsKey((k) => k + 1);
                     setPositionEditorIndex(null);
                   }}
@@ -1014,8 +1110,9 @@ export function VideoCreator() {
                       }}
                       onDoubleClick={() => setPositionEditorIndex(index)}
                       className={`
-                        relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-slate-600 hover:border-slate-500 cursor-grab active:cursor-grabbing
+                        relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 cursor-grab active:cursor-grabbing
                         transition-all duration-150
+                        ${pausedTimelineIndex === index ? "border-indigo-400 shadow-[0_0_12px_rgba(99,102,241,0.5)]" : "border-slate-600 hover:border-slate-500"}
                         ${draggedIndex === index ? "opacity-50 scale-95" : ""}
                       `}
                     >
@@ -1035,17 +1132,26 @@ export function VideoCreator() {
                         <img
                           src={item.url}
                           alt={`Slide ${index + 1}`}
-                          className="w-full h-full object-cover pointer-events-none"
+                          className="w-full h-full pointer-events-none"
                           draggable={false}
+                          style={{
+                            objectFit: "cover",
+                            objectPosition: getTransform(index).position,
+                            transform: `scale(${getTransform(index).scale})`,
+                          }}
                         />
                       ) : (
                         <video
                           src={item.url}
                           muted
-                          className="w-full h-full object-cover pointer-events-none"
+                          className="w-full h-full pointer-events-none"
                           preload="metadata"
                           crossOrigin="anonymous"
-                          style={{ objectFit: "cover" }}
+                          style={{
+                            objectFit: "cover",
+                            objectPosition: getTransform(index).position,
+                            transform: `scale(${getTransform(index).scale})`,
+                          }}
                         />
                       )}
                       <span className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-0.5 bg-black/70 text-white text-xs py-0.5">
